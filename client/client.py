@@ -14,12 +14,11 @@ class VibevoiceClient:
         self,
         base_url: str,
         token: str,
-        verify: bool | str = True,
-        ca_cert: str | None = None,
+        verify: bool | str,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
-        self._verify: bool | str = ca_cert if ca_cert is not None else verify
+        self._verify: bool | str = verify
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
@@ -27,7 +26,7 @@ class VibevoiceClient:
     async def transcribe(
         self,
         audio_path: str | Path,
-        hotwords: str | None = None,
+        hotwords: str | None,
     ) -> AsyncIterator[TranscriptionEvent]:
         """Upload audio and stream transcription events."""
         path = Path(audio_path)
@@ -68,24 +67,24 @@ class VibevoiceClient:
                         if current_event == "queue":
                             yield TranscriptionEvent(
                                 event_type=EventType.QUEUE,
-                                job_id=payload.get("job_id"),
-                                position=payload.get("position"),
-                                estimated_wait_seconds=payload.get("estimated_wait_seconds"),
+                                job_id=payload["job_id"],
+                                position=payload["position"],
+                                estimated_wait_seconds=payload["estimated_wait_seconds"],
                             )
                         elif current_event == "data":
                             yield TranscriptionEvent(
                                 event_type=EventType.DATA,
-                                text=payload.get("text"),
+                                text=payload["text"],
                             )
                         elif current_event == "error":
                             yield TranscriptionEvent(
                                 event_type=EventType.ERROR,
-                                error=payload.get("error"),
+                                error=payload["error"],
                             )
                         elif current_event == "done":
                             yield TranscriptionEvent(
                                 event_type=EventType.DONE,
-                                job_id=payload.get("job_id"),
+                                job_id=payload["job_id"],
                             )
 
                         # Reset to default after processing data line

@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import jwt as pyjwt
 import pytest
@@ -18,17 +19,28 @@ _PUBLIC_PEM = _PRIVATE_KEY.public_key().public_bytes(
 )
 
 
-def _sign(subject: str = "test-user", jti: str | None = None, key: object = _PRIVATE_KEY) -> str:
-    payload: dict[str, str] = {"sub": subject, "jti": jti or uuid.uuid4().hex}
+def _sign(subject: str, jti: str, key: object) -> str:
+    payload: dict[str, str] = {"sub": subject, "jti": jti}
     return pyjwt.encode(payload, key, algorithm="ES256")  # type: ignore[arg-type]
 
 
-def _make_settings(tmp_path: object, public_pem: bytes = _PUBLIC_PEM, **kwargs: str) -> Settings:
-    from pathlib import Path
-
+def _make_settings(tmp_path: object, public_pem: bytes, revoked_tokens_file: str) -> Settings:
     key_file = Path(str(tmp_path)) / "public.pem"
     key_file.write_bytes(public_pem)
-    return Settings(jwt_public_key_file=str(key_file), **kwargs)
+    return Settings(
+        vllm_base_url="http://127.0.0.1:9999",
+        server_host="127.0.0.1",
+        server_port=54912,
+        max_audio_bytes=500 * 1024 * 1024,
+        max_queue_size=5,
+        jwt_public_key_file=str(key_file),
+        revoked_tokens_file=revoked_tokens_file,
+        require_https=False,
+        vllm_model_name="vibevoice",
+        vllm_max_tokens=65536,
+        vllm_temperature=0.0,
+        vllm_top_p=1.0,
+    )
 
 
 def _reset_caches() -> None:
@@ -41,8 +53,10 @@ def _reset_caches() -> None:
 
 def test_valid_token(tmp_path: object) -> None:
     _reset_caches()
-    settings = _make_settings(tmp_path)
-    token = _sign("alice")
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
+    token = _sign("alice", uuid.uuid4().hex, _PRIVATE_KEY)
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     subject = verify_token(creds, settings)
     assert subject == "alice"
@@ -50,15 +64,32 @@ def test_valid_token(tmp_path: object) -> None:
 
 def test_invalid_token(tmp_path: object) -> None:
     _reset_caches()
-    settings = _make_settings(tmp_path)
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="not-a-jwt")
     with pytest.raises(HTTPException) as exc_info:
         verify_token(creds, settings)
     assert exc_info.value.status_code == 401
 
 
-def test_no_public_key_configured() -> None:
-    settings = Settings(jwt_public_key_file="")
+def test_no_public_key_configured(tmp_path: object) -> None:
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = Settings(
+        vllm_base_url="http://127.0.0.1:9999",
+        server_host="127.0.0.1",
+        server_port=54912,
+        max_audio_bytes=500 * 1024 * 1024,
+        max_queue_size=5,
+        jwt_public_key_file="",
+        revoked_tokens_file=str(revoked_file),
+        require_https=False,
+        vllm_model_name="vibevoice",
+        vllm_max_tokens=65536,
+        vllm_temperature=0.0,
+        vllm_top_p=1.0,
+    )
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="any")
     with pytest.raises(HTTPException) as exc_info:
         verify_token(creds, settings)
@@ -67,9 +98,11 @@ def test_no_public_key_configured() -> None:
 
 def test_wrong_signing_key(tmp_path: object) -> None:
     _reset_caches()
-    settings = _make_settings(tmp_path)
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
     other_key = ec.generate_private_key(ec.SECP256R1())
-    token = _sign("bob", key=other_key)
+    token = _sign("bob", uuid.uuid4().hex, other_key)
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     with pytest.raises(HTTPException) as exc_info:
         verify_token(creds, settings)
@@ -78,7 +111,9 @@ def test_wrong_signing_key(tmp_path: object) -> None:
 
 def test_missing_sub_claim(tmp_path: object) -> None:
     _reset_caches()
-    settings = _make_settings(tmp_path)
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
     token = pyjwt.encode({"jti": "abc"}, _PRIVATE_KEY, algorithm="ES256")
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     with pytest.raises(HTTPException) as exc_info:
@@ -88,7 +123,9 @@ def test_missing_sub_claim(tmp_path: object) -> None:
 
 def test_missing_jti_claim(tmp_path: object) -> None:
     _reset_caches()
-    settings = _make_settings(tmp_path)
+    revoked_file = Path(str(tmp_path)) / "revoked.txt"
+    revoked_file.write_text("")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
     token = pyjwt.encode({"sub": "alice"}, _PRIVATE_KEY, algorithm="ES256")
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     with pytest.raises(HTTPException) as exc_info:
@@ -97,15 +134,13 @@ def test_missing_jti_claim(tmp_path: object) -> None:
 
 
 def test_revoked_token(tmp_path: object) -> None:
-    from pathlib import Path
-
     _reset_caches()
     jti = uuid.uuid4().hex
     revoked_file = Path(str(tmp_path)) / "revoked.txt"
     revoked_file.write_text(f"# Revoked tokens\n{jti}\n")
 
-    settings = _make_settings(tmp_path, revoked_tokens_file=str(revoked_file))
-    token = _sign("alice", jti=jti)
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
+    token = _sign("alice", jti, _PRIVATE_KEY)
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     with pytest.raises(HTTPException) as exc_info:
         verify_token(creds, settings)
@@ -114,38 +149,25 @@ def test_revoked_token(tmp_path: object) -> None:
 
 
 def test_non_revoked_token_passes(tmp_path: object) -> None:
-    from pathlib import Path
-
     _reset_caches()
     revoked_file = Path(str(tmp_path)) / "revoked.txt"
     revoked_file.write_text("some-other-jti\n")
 
-    settings = _make_settings(tmp_path, revoked_tokens_file=str(revoked_file))
-    token = _sign("alice")
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    subject = verify_token(creds, settings)
-    assert subject == "alice"
-
-
-def test_missing_revocation_file_is_not_error(tmp_path: object) -> None:
-    _reset_caches()
-    settings = _make_settings(tmp_path, revoked_tokens_file="/nonexistent/revoked.txt")
-    token = _sign("alice")
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
+    token = _sign("alice", uuid.uuid4().hex, _PRIVATE_KEY)
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     subject = verify_token(creds, settings)
     assert subject == "alice"
 
 
 def test_revocation_file_comments_ignored(tmp_path: object) -> None:
-    from pathlib import Path
-
     _reset_caches()
     jti = uuid.uuid4().hex
     revoked_file = Path(str(tmp_path)) / "revoked.txt"
     revoked_file.write_text(f"# This is a comment\n\n# {jti}\n")
 
-    settings = _make_settings(tmp_path, revoked_tokens_file=str(revoked_file))
-    token = _sign("alice", jti=jti)
+    settings = _make_settings(tmp_path, _PUBLIC_PEM, str(revoked_file))
+    token = _sign("alice", jti, _PRIVATE_KEY)
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     # The jti appears only in a comment line, so it should NOT be revoked
     subject = verify_token(creds, settings)

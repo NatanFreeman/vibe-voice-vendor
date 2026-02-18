@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import http.server
 import json
-import socket
 import stat
 import webbrowser
 from datetime import UTC, datetime, timedelta
@@ -53,13 +52,13 @@ _HTML_PAGE = """\
   <h1>VVV Certificate Generator</h1>
   <form id="form">
     <label for="hostname">Hostname</label>
-    <input id="hostname" name="hostname" required>
+    <input id="hostname" name="hostname" placeholder="Enter hostname" required>
 
     <label for="days">Validity (days)</label>
-    <input id="days" name="days" type="number" value="3650" min="1" required>
+    <input id="days" name="days" type="number" placeholder="Enter validity (days)" min="1" required>
 
     <label for="certs_dir">Output directory</label>
-    <input id="certs_dir" name="certs_dir" value="certs" required>
+    <input id="certs_dir" name="certs_dir" placeholder="Enter output directory path" required>
 
     <button type="submit" id="btn">Generate Certificate</button>
   </form>
@@ -67,10 +66,6 @@ _HTML_PAGE = """\
   <div id="result"></div>
 </div>
 <script>
-fetch("/defaults").then(r => r.json()).then(d => {
-  document.getElementById("hostname").value = d.hostname;
-});
-
 document.getElementById("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const btn = document.getElementById("btn");
@@ -185,20 +180,30 @@ class _RequestHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/":
             self._send_response(200, "text/html", _HTML_PAGE.encode())
-        elif self.path == "/defaults":
-            data = json.dumps({"hostname": socket.gethostname()})
-            self._send_response(200, "application/json", data.encode())
         else:
             self._send_response(404, "text/plain", b"Not found")
 
     def do_POST(self) -> None:
         if self.path == "/generate":
-            length = int(self.headers.get("Content-Length", 0))
-            body: dict[str, Any] = json.loads(self.rfile.read(length))
+            length_str = self.headers.get("Content-Length")
+            if length_str is None:
+                err = json.dumps({"error": "Missing Content-Length"}).encode()
+                self._send_response(400, "application/json", err)
+                return
+            body: dict[str, Any] = json.loads(self.rfile.read(int(length_str)))
+
+            missing = [f for f in ("hostname", "days", "certs_dir") if f not in body]
+            if missing:
+                error_msg = f"Missing required fields: {', '.join(missing)}"
+                self._send_response(
+                    400, "application/json", json.dumps({"error": error_msg}).encode()
+                )
+                return
+
             result = _generate_cert(
-                hostname=body.get("hostname", "localhost"),
-                days=int(body.get("days", 3650)),
-                certs_dir=body.get("certs_dir", "certs"),
+                hostname=body["hostname"],
+                days=int(body["days"]),
+                certs_dir=body["certs_dir"],
             )
             data = json.dumps(result)
             self._send_response(200, "application/json", data.encode())

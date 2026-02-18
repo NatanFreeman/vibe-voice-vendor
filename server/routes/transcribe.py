@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from server.audio import encode_audio_base64, guess_mime_type, probe_duration
+from server.audio import detect_mime_type, encode_audio_base64, probe_duration
 from server.auth import verify_token
 from server.models import ErrorEvent, QueuePositionEvent, TranscriptionChunkEvent
 from server.queue import TranscriptionJob, TranscriptionQueue
@@ -32,7 +32,12 @@ async def transcribe(
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     audio_b64 = encode_audio_base64(audio_bytes)
-    mime_type = guess_mime_type(audio.filename)
+    if audio.filename is None:
+        raise HTTPException(status_code=400, detail="Audio file must include a filename")
+    try:
+        mime_type = detect_mime_type(audio.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     try:
         duration = await probe_duration(audio_bytes)
     except RuntimeError as exc:
@@ -55,10 +60,11 @@ async def transcribe(
         # Send initial queue position
         position, eta = queue.get_position_and_eta(job.job_id)
         if position is not None:
+            assert eta is not None, f"ETA must not be None when position={position} is not None"
             event = QueuePositionEvent(
                 job_id=job.job_id,
                 position=position,
-                estimated_wait_seconds=eta or 0.0,
+                estimated_wait_seconds=eta,
             )
             yield f"event: queue\ndata: {event.model_dump_json()}\n\n"
 

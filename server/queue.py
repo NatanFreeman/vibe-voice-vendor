@@ -30,7 +30,7 @@ class TranscriptionJob:
 
 
 class TranscriptionQueue:
-    def __init__(self, max_size: int = 50) -> None:
+    def __init__(self, max_size: int) -> None:
         self._pending: asyncio.Queue[str] = asyncio.Queue(maxsize=max_size)
         self._jobs: OrderedDict[str, TranscriptionJob] = OrderedDict()
         self._processing_times: list[float] = []

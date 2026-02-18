@@ -10,7 +10,7 @@ dependencies = [
     "httpx>=0.28.0",
     "PyJWT>=2.8.0",
     "cryptography>=42.0.0",
-    "pydantic-settings>=2.6.0",
+    "pydantic>=2.6.0",
     "python-multipart>=0.0.18",
 ]
 

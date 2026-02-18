@@ -35,18 +35,30 @@ jobs:
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "public_key=${{ runner.temp }}/keys/public.pem" >> "$GITHUB_OUTPUT"
 
+      - name: Create empty revoked tokens file
+        run: touch "${{ runner.temp }}/revoked_tokens.txt"
+
       - name: Generate test audio (1s tone FLAC)
         run: ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -ar 16000 -ac 1 test_audio.flac
 
       - name: Start mock vLLM server
-        run: uv run python tests/e2e/mock_vllm.py &
+        run: uv run python tests/e2e/mock_vllm.py --host 127.0.0.1 --port ${{ env.MOCK_VLLM_PORT }} &
 
       - name: Start VVV server
-        env:
-          VVV_JWT_PUBLIC_KEY_FILE: ${{ steps.auth.outputs.public_key }}
-          VVV_VLLM_BASE_URL: http://127.0.0.1:${{ env.MOCK_VLLM_PORT }}
-          VVV_SERVER_PORT: ${{ env.VVV_PORT }}
-        run: uv run python -m server &
+        run: |
+          uv run python -m server \
+            --vllm-base-url "http://127.0.0.1:${{ env.MOCK_VLLM_PORT }}" \
+            --host 127.0.0.1 \
+            --port ${{ env.VVV_PORT }} \
+            --max-audio-bytes 524288000 \
+            --max-queue-size 50 \
+            --jwt-public-key-file "${{ steps.auth.outputs.public_key }}" \
+            --revoked-tokens-file "${{ runner.temp }}/revoked_tokens.txt" \
+            --require-https false \
+            --vllm-model-name vibevoice \
+            --vllm-max-tokens 65536 \
+            --vllm-temperature 0.0 \
+            --vllm-top-p 1.0 &
 
       - name: Wait for servers
         run: |

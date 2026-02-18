@@ -22,13 +22,19 @@ def encode_audio_base64(raw_bytes: bytes) -> str:
     return base64.b64encode(raw_bytes).decode("ascii")
 
 
-def guess_mime_type(filename: str | None) -> str:
-    """Guess audio MIME type from filename extension."""
-    if filename:
-        suffix = PurePosixPath(filename).suffix.lower()
-        if suffix in _MIME_MAP:
-            return _MIME_MAP[suffix]
-    return "application/octet-stream"
+def detect_mime_type(filename: str) -> str:
+    """Detect audio MIME type from filename extension.
+
+    Raises ValueError if the extension is not recognized.
+    The caller must provide a filename with a supported audio extension.
+    """
+    suffix = PurePosixPath(filename).suffix.lower()
+    if suffix not in _MIME_MAP:
+        raise ValueError(
+            f"Unrecognized audio extension '{suffix}' in filename '{filename}'. "
+            f"Supported extensions: {', '.join(sorted(_MIME_MAP.keys()))}"
+        )
+    return _MIME_MAP[suffix]
 
 
 async def probe_duration(raw_bytes: bytes) -> float:
@@ -50,7 +56,8 @@ async def probe_duration(raw_bytes: bytes) -> float:
         raise RuntimeError(f"ffprobe failed: {error_msg}")
 
     info = json.loads(stdout)
-    duration_str = info.get("format", {}).get("duration")
-    if duration_str is None:
+    if "format" not in info:
+        raise RuntimeError("ffprobe output missing 'format' key")
+    if "duration" not in info["format"]:
         raise RuntimeError("ffprobe could not determine audio duration")
-    return float(duration_str)
+    return float(info["format"]["duration"])

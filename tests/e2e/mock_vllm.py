@@ -1,5 +1,6 @@
 """Mock vLLM server that returns a fixed transcription for E2E testing."""
 
+import argparse
 import asyncio
 import json
 from collections.abc import AsyncIterator
@@ -45,4 +46,8 @@ async def chat_completions() -> StreamingResponse:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=9100)
+    parser = argparse.ArgumentParser(description="Mock vLLM server for E2E testing")
+    parser.add_argument("--host", required=True, help="Bind address")
+    parser.add_argument("--port", type=int, required=True, help="Bind port")
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)

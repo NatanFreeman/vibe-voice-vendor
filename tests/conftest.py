@@ -30,10 +30,21 @@ def settings(tmp_path: Path) -> Settings:
     server.auth._revocation_cache = (0.0, frozenset())
     key_file = tmp_path / "public.pem"
     key_file.write_bytes(_PUBLIC_PEM)
+    revoked_file = tmp_path / "revoked.txt"
+    revoked_file.write_text("")
     return Settings(
         vllm_base_url="http://127.0.0.1:9999",
-        jwt_public_key_file=str(key_file),
+        server_host="127.0.0.1",
+        server_port=54912,
+        max_audio_bytes=500 * 1024 * 1024,
         max_queue_size=5,
+        jwt_public_key_file=str(key_file),
+        revoked_tokens_file=str(revoked_file),
+        require_https=False,
+        vllm_model_name="vibevoice",
+        vllm_max_tokens=65536,
+        vllm_temperature=0.0,
+        vllm_top_p=1.0,
     )
 
 

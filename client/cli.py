@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,20 +20,15 @@ async def _transcribe(
     try:
         async for event in client.transcribe(audio_path, hotwords):
             if event.event_type == EventType.QUEUE:
-                eta = (
-                    f"{event.estimated_wait_seconds:.0f}s"
-                    if event.estimated_wait_seconds is not None
-                    else "unknown"
-                )
                 print(
-                    f"[Queue] Position: {event.position}, ETA: {eta}",
+                    f"[Queue] Position: {event.position}, ETA: {event.estimated_wait_seconds:.0f}s",
                     file=sys.stderr,
                 )
             elif event.event_type == EventType.DATA:
-                text = event.text or ""
-                print(text, end="", flush=True)
-                if output_file:
-                    output_file.write(text)
+                if event.text is not None:
+                    print(event.text, end="", flush=True)
+                    if output_file:
+                        output_file.write(event.text)
             elif event.event_type == EventType.ERROR:
                 print(f"\n[Error] {event.error}", file=sys.stderr)
                 sys.exit(1)
@@ -47,17 +41,17 @@ async def _transcribe(
 
 async def _status(client: VibevoiceClient) -> None:
     info = await client.queue_status()
-    your_jobs: Any = info.get("your_jobs", [])
-    total = info.get("total_queued", 0)
+    your_jobs: list[dict[str, Any]] = info["your_jobs"]  # type: ignore[assignment]
+    total: int = info["total_queued"]  # type: ignore[assignment]
 
     print(f"Total queued: {total}")
     if your_jobs:
         print("Your jobs:")
         for job in your_jobs:
-            status = job.get("status", "unknown")
-            pos = job.get("position")
-            eta = job.get("estimated_wait_seconds")
-            job_id = job.get("job_id", "?")
+            status = job["status"]
+            pos = job["position"]
+            eta = job["estimated_wait_seconds"]
+            job_id = job["job_id"]
             parts = [f"  {job_id[:8]}... status={status}"]
             if pos is not None:
                 parts.append(f"position={pos}")
@@ -74,15 +68,13 @@ def main() -> None:
         "--server", required=True, help="Server URL (e.g. https://asr.example.com)"
     )
     parser.add_argument(
-        "--token",
-        default=os.environ.get("VVV_TOKEN"),
-        help="Bearer token (default: VVV_TOKEN env var)",
+        "--token", required=True, help="Bearer token for authentication"
     )
     parser.add_argument(
         "--insecure", action="store_true", help="Disable TLS certificate verification"
     )
     parser.add_argument(
-        "--ca-cert", default=None, help="Path to CA certificate for self-signed TLS"
+        "--ca-cert", help="Path to CA certificate for self-signed TLS"
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -96,19 +88,26 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if not args.token:
-        print("Error: provide --token or set VVV_TOKEN env var", file=sys.stderr)
+    if args.insecure and args.ca_cert:
+        print("Error: --insecure and --ca-cert are mutually exclusive", file=sys.stderr)
         sys.exit(1)
 
     if args.ca_cert and not Path(args.ca_cert).exists():
         print(f"CA cert file not found: {args.ca_cert}", file=sys.stderr)
         sys.exit(1)
 
+    verify: bool | str
+    if args.insecure:
+        verify = False
+    elif args.ca_cert:
+        verify = args.ca_cert
+    else:
+        verify = True
+
     client = VibevoiceClient(
         base_url=args.server,
         token=args.token,
-        verify=not args.insecure,
-        ca_cert=args.ca_cert,
+        verify=verify,
     )
 
     if args.command == "transcribe":

@@ -24,9 +24,9 @@ class RequireHTTPSMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope["path"] not in self._OPEN_PATHS:
-            headers = dict(scope.get("headers", []))
-            proto = headers.get(b"x-forwarded-proto", b"").decode().lower()
-            if proto != "https":
+            headers = dict(scope["headers"])
+            proto_bytes = headers.get(b"x-forwarded-proto")
+            if proto_bytes is None or proto_bytes.decode().lower() != "https":
                 body = json.dumps({"detail": "HTTPS required"}).encode()
                 await send(
                     {
@@ -63,10 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await http_client.aclose()
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    if settings is None:
-        settings = Settings()
-
+def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(
         title="VibeVoice ASR Server",
         lifespan=lifespan,

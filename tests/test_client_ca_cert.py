@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,8 +8,8 @@ import pytest
 from client.client import VibevoiceClient
 
 
-def test_default_verify() -> None:
-    c = VibevoiceClient("http://localhost", "tok")
+def test_verify_true() -> None:
+    c = VibevoiceClient("http://localhost", "tok", verify=True)
     assert c._verify is True
 
 
@@ -19,14 +18,9 @@ def test_verify_false() -> None:
     assert c._verify is False
 
 
-def test_ca_cert_overrides_verify() -> None:
-    c = VibevoiceClient("http://localhost", "tok", ca_cert="/tmp/ca.pem")
+def test_verify_ca_cert_path() -> None:
+    c = VibevoiceClient("http://localhost", "tok", verify="/tmp/ca.pem")
     assert c._verify == "/tmp/ca.pem"
-
-
-def test_ca_cert_none_keeps_verify() -> None:
-    c = VibevoiceClient("http://localhost", "tok", verify=False, ca_cert=None)
-    assert c._verify is False
 
 
 # ── CLI tests ────────────────────────────────────────────────────────
@@ -39,6 +33,20 @@ def test_cli_ca_cert_missing_file(tmp_path: Path) -> None:
     with (
         patch("sys.argv", ["vvv", "--server", "https://x", "--token", "t",
                            "--ca-cert", fake_path, "status"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_cli_insecure_and_ca_cert_mutual_exclusion(tmp_path: Path) -> None:
+    ca = tmp_path / "ca.pem"
+    ca.write_text("fake")
+    from client.cli import main
+
+    with (
+        patch("sys.argv", ["vvv", "--server", "https://x", "--token", "t",
+                           "--insecure", "--ca-cert", str(ca), "status"]),
         pytest.raises(SystemExit) as exc_info,
     ):
         main()

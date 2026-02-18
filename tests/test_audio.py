@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from server.audio import encode_audio_base64, guess_mime_type, probe_duration
+from server.audio import detect_mime_type, encode_audio_base64, probe_duration
 
 has_ffprobe = shutil.which("ffprobe") is not None
 
@@ -45,37 +45,34 @@ def test_encode_audio_base64_roundtrip() -> None:
     assert base64.b64decode(encoded) == raw
 
 
-def test_guess_mime_type_wav() -> None:
-    assert guess_mime_type("recording.wav") == "audio/wav"
+def test_detect_mime_type_wav() -> None:
+    assert detect_mime_type("recording.wav") == "audio/wav"
 
 
-def test_guess_mime_type_mp3() -> None:
-    assert guess_mime_type("song.mp3") == "audio/mpeg"
+def test_detect_mime_type_mp3() -> None:
+    assert detect_mime_type("song.mp3") == "audio/mpeg"
 
 
-def test_guess_mime_type_flac() -> None:
-    assert guess_mime_type("track.flac") == "audio/flac"
+def test_detect_mime_type_flac() -> None:
+    assert detect_mime_type("track.flac") == "audio/flac"
 
 
-def test_guess_mime_type_ogg() -> None:
-    assert guess_mime_type("voice.ogg") == "audio/ogg"
+def test_detect_mime_type_ogg() -> None:
+    assert detect_mime_type("voice.ogg") == "audio/ogg"
 
 
-def test_guess_mime_type_opus() -> None:
-    assert guess_mime_type("voice.opus") == "audio/ogg"
+def test_detect_mime_type_opus() -> None:
+    assert detect_mime_type("voice.opus") == "audio/ogg"
 
 
-def test_guess_mime_type_unknown() -> None:
-    assert guess_mime_type("data.xyz") == "application/octet-stream"
+def test_detect_mime_type_unknown_raises() -> None:
+    with pytest.raises(ValueError, match="Unrecognized audio extension"):
+        detect_mime_type("data.xyz")
 
 
-def test_guess_mime_type_none() -> None:
-    assert guess_mime_type(None) == "application/octet-stream"
-
-
-def test_guess_mime_type_case_insensitive() -> None:
-    assert guess_mime_type("FILE.WAV") == "audio/wav"
-    assert guess_mime_type("track.MP3") == "audio/mpeg"
+def test_detect_mime_type_case_insensitive() -> None:
+    assert detect_mime_type("FILE.WAV") == "audio/wav"
+    assert detect_mime_type("track.MP3") == "audio/mpeg"
 
 
 @pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")

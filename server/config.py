@@ -1,18 +1,16 @@
-from pydantic_settings import BaseSettings
+from pydantic import BaseModel
 
 
-class Settings(BaseSettings):
-    model_config = {"env_prefix": "VVV_"}
-
-    vllm_base_url: str = "http://127.0.0.1:37845"
-    server_host: str = "127.0.0.1"
-    server_port: int = 54912
-    max_audio_bytes: int = 500 * 1024 * 1024  # 500 MB
-    max_queue_size: int = 50
-    jwt_public_key_file: str = ""  # Path to ES256 public key PEM file
-    revoked_tokens_file: str = ""  # Path to file listing revoked JTI values (one per line)
-    require_https: bool = False  # Reject non-HTTPS requests on protected endpoints
-    vllm_model_name: str = "vibevoice"
-    vllm_max_tokens: int = 65536
-    vllm_temperature: float = 0.0
-    vllm_top_p: float = 1.0
+class Settings(BaseModel):
+    vllm_base_url: str
+    server_host: str
+    server_port: int
+    max_audio_bytes: int
+    max_queue_size: int
+    jwt_public_key_file: str
+    revoked_tokens_file: str
+    require_https: bool
+    vllm_model_name: str
+    vllm_max_tokens: int
+    vllm_temperature: float
+    vllm_top_p: float

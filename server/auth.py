@@ -35,17 +35,12 @@ def _load_revoked_tokens(filepath: str) -> frozenset[str]:
     if now - cached_at < _REVOCATION_CACHE_TTL:
         return cached_set
 
-    revoked: frozenset[str] = frozenset()
-    if filepath:
-        try:
-            text = Path(filepath).read_text()
-            revoked = frozenset(
-                line.strip()
-                for line in text.splitlines()
-                if line.strip() and not line.strip().startswith("#")
-            )
-        except FileNotFoundError:
-            pass
+    text = Path(filepath).read_text()
+    revoked = frozenset(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
 
     _revocation_cache = (now, revoked)
     return revoked

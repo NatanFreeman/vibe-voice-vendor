@@ -30,7 +30,7 @@ TEST_TOKEN = pyjwt.encode(
 )
 
 
-def _make_wav(sample_rate: int = 16000, num_samples: int = 16000) -> bytes:
+def _make_wav(sample_rate: int, num_samples: int) -> bytes:
     """Create a minimal valid WAV file."""
     bits_per_sample = 16
     num_channels = 1
@@ -57,17 +57,35 @@ def _make_wav(sample_rate: int = 16000, num_samples: int = 16000) -> bytes:
     return header + b"\x00" * data_size
 
 
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
+def _make_all_settings(tmp_path: Path, **overrides: object) -> Settings:
+    """Create Settings with all required fields explicitly specified."""
     _load_public_key.cache_clear()
     server.auth._revocation_cache = (0.0, frozenset())
     key_file = tmp_path / "public.pem"
     key_file.write_bytes(_PUBLIC_PEM)
-    return Settings(
-        vllm_base_url="http://127.0.0.1:37845",
-        jwt_public_key_file=str(key_file),
-        max_queue_size=5,
-    )
+    revoked_file = tmp_path / "revoked.txt"
+    revoked_file.write_text("")
+    values: dict[str, object] = {
+        "vllm_base_url": "http://127.0.0.1:37845",
+        "server_host": "127.0.0.1",
+        "server_port": 54912,
+        "max_audio_bytes": 500 * 1024 * 1024,
+        "max_queue_size": 5,
+        "jwt_public_key_file": str(key_file),
+        "revoked_tokens_file": str(revoked_file),
+        "require_https": False,
+        "vllm_model_name": "vibevoice",
+        "vllm_max_tokens": 65536,
+        "vllm_temperature": 0.0,
+        "vllm_top_p": 1.0,
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    return _make_all_settings(tmp_path)
 
 
 @asynccontextmanager
@@ -134,18 +152,9 @@ async def test_transcribe_empty_audio(settings: Settings) -> None:
 
 
 async def test_https_required_rejects_http(tmp_path: Path) -> None:
-    _load_public_key.cache_clear()
-    server.auth._revocation_cache = (0.0, frozenset())
-    key_file = tmp_path / "public.pem"
-    key_file.write_bytes(_PUBLIC_PEM)
-    https_settings = Settings(
-        vllm_base_url="http://127.0.0.1:37845",
-        jwt_public_key_file=str(key_file),
-        max_queue_size=5,
-        require_https=True,
-    )
+    https_settings = _make_all_settings(tmp_path, require_https=True)
     async with _lifespan_client(https_settings) as client:
-        # No X-Forwarded-Proto header → should be rejected
+        # No X-Forwarded-Proto header -> should be rejected
         resp = await client.get(
             "/v1/queue/status",
             headers={"Authorization": f"Bearer {TEST_TOKEN}"},
@@ -155,32 +164,14 @@ async def test_https_required_rejects_http(tmp_path: Path) -> None:
 
 
 async def test_https_required_allows_health(tmp_path: Path) -> None:
-    _load_public_key.cache_clear()
-    server.auth._revocation_cache = (0.0, frozenset())
-    key_file = tmp_path / "public.pem"
-    key_file.write_bytes(_PUBLIC_PEM)
-    https_settings = Settings(
-        vllm_base_url="http://127.0.0.1:37845",
-        jwt_public_key_file=str(key_file),
-        max_queue_size=5,
-        require_https=True,
-    )
+    https_settings = _make_all_settings(tmp_path, require_https=True)
     async with _lifespan_client(https_settings) as client:
         resp = await client.get("/health")
         assert resp.status_code == 200
 
 
 async def test_https_required_passes_with_header(tmp_path: Path) -> None:
-    _load_public_key.cache_clear()
-    server.auth._revocation_cache = (0.0, frozenset())
-    key_file = tmp_path / "public.pem"
-    key_file.write_bytes(_PUBLIC_PEM)
-    https_settings = Settings(
-        vllm_base_url="http://127.0.0.1:37845",
-        jwt_public_key_file=str(key_file),
-        max_queue_size=5,
-        require_https=True,
-    )
+    https_settings = _make_all_settings(tmp_path, require_https=True)
     async with _lifespan_client(https_settings) as client:
         resp = await client.get(
             "/v1/queue/status",

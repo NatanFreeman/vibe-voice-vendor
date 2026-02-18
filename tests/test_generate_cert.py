@@ -6,11 +6,10 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-from scripts.generate_cert import _RequestHandler, _generate_cert
+from scripts.generate_cert import _generate_cert, _RequestHandler
 
 
 class _FakeRfile(BytesIO):
@@ -62,7 +61,6 @@ def test_cert_common_name(tmp_path: Path) -> None:
 
 
 def test_custom_days(tmp_path: Path) -> None:
-    from datetime import timezone
 
     _generate_cert("h", 10, str(tmp_path / "out"))
     cert_pem = (tmp_path / "out" / "fullchain.pem").read_bytes()
@@ -103,13 +101,11 @@ def test_handler_get_root_serves_html() -> None:
     assert "VVV Certificate Generator" in raw
 
 
-def test_handler_get_defaults() -> None:
+def test_handler_get_unknown_returns_404() -> None:
     handler = _make_handler("GET", "/defaults")
     handler.do_GET()
     raw = handler.wfile.getvalue().decode()
-    body = raw.split("\r\n\r\n", 1)[1]
-    data = json.loads(body)
-    assert "hostname" in data
+    assert "404" in raw
 
 
 def test_handler_post_generate(tmp_path: Path) -> None:

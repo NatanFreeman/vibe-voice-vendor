@@ -70,10 +70,11 @@ async def stream_transcription(
                 data = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
-            choices = data.get("choices", [])
-            if not choices:
+            if "choices" not in data or not data["choices"]:
                 continue
-            delta = choices[0].get("delta", {})
-            text = delta.get("content")
+            choice = data["choices"][0]
+            if "delta" not in choice or "content" not in choice["delta"]:
+                continue
+            text = choice["delta"]["content"]
             if text:
                 yield text

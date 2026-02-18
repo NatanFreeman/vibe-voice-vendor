@@ -12,9 +12,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate VVV auth key pair and JWT token")
     parser.add_argument(
-        "--keys-dir", default="keys", help="Directory for key files (default: keys)"
+        "--keys-dir", required=True, help="Directory for key files"
     )
-    parser.add_argument("--subject", default=None, help="Token subject/username (default: random)")
+    parser.add_argument("--subject", required=True, help="Token subject/username")
     args = parser.parse_args()
 
     keys_dir = Path(args.keys_dir)
@@ -45,18 +45,16 @@ def main() -> None:
         )
         print(f"Using existing key pair from {keys_dir}/")
 
-    subject = args.subject or uuid.uuid4().hex[:12]
-
     token = jwt.encode(
-        {"sub": subject, "jti": uuid.uuid4().hex},
+        {"sub": args.subject, "jti": uuid.uuid4().hex},
         private_key,
         algorithm="ES256",
     )
 
-    print(f"Subject:     {subject}")
+    print(f"Subject:     {args.subject}")
     print(f"Token:       {token}")
     print(f"Public key:  {public_key_path}")
-    print(f"\nSet on server: VVV_JWT_PUBLIC_KEY_FILE={public_key_path}")
+    print(f"\nSet on server: --jwt-public-key-file {public_key_path}")
 
 
 if __name__ == "__main__":

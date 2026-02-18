@@ -4,8 +4,7 @@
 //! VibeVoice ASR server. Generates self-signed certificates automatically
 //! and hot-reloads them on expiry with zero downtime.
 //!
-//! Architecture:
-//!     Internet --> vvv_proxy :42862 (HTTPS, 0.0.0.0) --> 127.0.0.1:54912 (FastAPI)
+//! All configuration is provided via required CLI arguments — no defaults.
 
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
@@ -22,6 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::Router;
 use axum_server::Handle;
+use clap::Parser;
 use futures::future::FutureExt;
 use futures::stream::StreamExt;
 use futures::SinkExt;
@@ -38,29 +38,52 @@ use tracing::{debug, error, info, warn, Level};
 use x509_parser::pem::Pem;
 
 // ============================================================================
-// Hard-Coded Configuration
+// CLI Arguments (all required, no defaults)
 // ============================================================================
 
-/// Upstream FastAPI server address. Always localhost, never exposed to the network.
-const UPSTREAM_HOST: &str = "127.0.0.1";
-const UPSTREAM_PORT: u16 = 54912;
+#[derive(Parser)]
+#[command(name = "vvv_proxy", about = "VibeVoice TLS Reverse Proxy")]
+struct Args {
+    /// Upstream server host (e.g., 127.0.0.1)
+    #[arg(long)]
+    upstream_host: String,
 
-/// HTTPS listener. Binds to all interfaces on a fixed port.
-const HTTPS_BIND: [u8; 4] = [0, 0, 0, 0];
-const HTTPS_PORT: u16 = 42862;
+    /// Upstream server port (e.g., 54912)
+    #[arg(long)]
+    upstream_port: u16,
 
-/// Request body limit in bytes: 500 MB (matches server's VVV_MAX_AUDIO_BYTES default).
-const MAX_BODY_SIZE: usize = 500 * 1024 * 1024;
+    /// HTTPS listen host (e.g., 0.0.0.0)
+    #[arg(long)]
+    listen_host: String,
 
-/// Self-signed certificate paths (relative to the working directory).
-const CERT_PATH: &str = "certs/self-signed/fullchain.pem";
-const KEY_PATH: &str = "certs/self-signed/privkey.pem";
+    /// HTTPS listen port (e.g., 42862)
+    #[arg(long)]
+    listen_port: u16,
 
-/// Certificate validity: 10 years.
-const CERT_VALIDITY_DAYS: u32 = 3650;
+    /// Maximum request body size in bytes (e.g., 524288000 for 500 MB)
+    #[arg(long)]
+    max_body_size: usize,
 
-/// How often to check certificate expiry (1 hour — generous for a 10-year cert).
-const CERT_CHECK_INTERVAL_SECS: u64 = 3600;
+    /// Path to TLS certificate PEM file
+    #[arg(long)]
+    cert_path: String,
+
+    /// Path to TLS private key PEM file
+    #[arg(long)]
+    key_path: String,
+
+    /// Certificate validity in days for self-signed generation (e.g., 3650)
+    #[arg(long)]
+    cert_validity_days: u32,
+
+    /// Certificate expiry check interval in seconds (e.g., 3600)
+    #[arg(long)]
+    cert_check_interval_secs: u64,
+}
+
+// ============================================================================
+// Hop-by-Hop and WebSocket Header Constants
+// ============================================================================
 
 /// Hop-by-hop headers stripped during proxying (RFC 7230 Section 6.1).
 const HOP_BY_HOP_HEADERS: &[&str] = &[
@@ -122,6 +145,7 @@ fn security_headers() -> [(HeaderName, HeaderValue); 4] {
 fn generate_self_signed_cert(
     cert_path: &Path,
     key_path: &Path,
+    validity_days: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use rcgen::{CertificateParams, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
 
@@ -161,7 +185,7 @@ fn generate_self_signed_cert(
 
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now;
-    params.not_after = now + time::Duration::days(i64::from(CERT_VALIDITY_DAYS));
+    params.not_after = now + time::Duration::days(i64::from(validity_days));
 
     let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .map_err(|e| format!("Failed to generate ECDSA P-256 key pair: {e}"))?;
@@ -185,7 +209,7 @@ fn generate_self_signed_cert(
         cn = %hostname_str,
         cert = %cert_path.display(),
         key = %key_path.display(),
-        valid_days = CERT_VALIDITY_DAYS,
+        valid_days = validity_days,
         "Self-signed certificate generated"
     );
 
@@ -210,9 +234,11 @@ fn check_cert_expiry(cert_path: &Path) -> Option<Duration> {
 async fn cert_renewal_task(
     cert_path: PathBuf,
     key_path: PathBuf,
+    validity_days: u32,
+    check_interval_secs: u64,
     tls_config: axum_server::tls_rustls::RustlsConfig,
 ) {
-    let interval = Duration::from_secs(CERT_CHECK_INTERVAL_SECS);
+    let interval = Duration::from_secs(check_interval_secs);
     loop {
         tokio::time::sleep(interval).await;
 
@@ -221,7 +247,7 @@ async fn cert_renewal_task(
         }
 
         warn!("Certificate expired or unreadable — regenerating");
-        if let Err(e) = generate_self_signed_cert(&cert_path, &key_path) {
+        if let Err(e) = generate_self_signed_cert(&cert_path, &key_path, validity_days) {
             error!(error = %e, "Certificate regeneration failed");
             continue;
         }
@@ -239,11 +265,13 @@ async fn cert_renewal_task(
 #[derive(Clone)]
 struct AppState {
     upstream_url: String,
+    upstream_host: String,
+    upstream_port: u16,
     http_client: reqwest::Client,
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new(upstream_host: String, upstream_port: u16) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(600))
             .connect_timeout(Duration::from_secs(10))
@@ -253,7 +281,9 @@ impl AppState {
             .expect("Failed to build HTTP client — TLS backend unavailable");
 
         Self {
-            upstream_url: format!("http://{UPSTREAM_HOST}:{UPSTREAM_PORT}"),
+            upstream_url: format!("http://{upstream_host}:{upstream_port}"),
+            upstream_host,
+            upstream_port,
             http_client,
         }
     }
@@ -390,7 +420,7 @@ async fn http_proxy(state: AppState, req: Request, client_addr: SocketAddr) -> R
             upstream_headers.append(key.clone(), value.clone());
         }
     }
-    if let Ok(host_val) = HeaderValue::from_str(&format!("{UPSTREAM_HOST}:{UPSTREAM_PORT}")) {
+    if let Ok(host_val) = HeaderValue::from_str(&format!("{}:{}", state.upstream_host, state.upstream_port)) {
         upstream_headers.insert(header::HOST, host_val);
     }
     if let Ok(ip_val) = HeaderValue::from_str(&client_addr.ip().to_string()) {
@@ -541,12 +571,12 @@ async fn websocket_proxy(
 // Server Setup
 // ============================================================================
 
-fn build_router() -> Router {
-    let state = AppState::new();
+fn build_router(upstream_host: String, upstream_port: u16, max_body_size: usize) -> Router {
+    let state = AppState::new(upstream_host, upstream_port);
     Router::new()
         .route("/{*path}", any(proxy_handler))
         .route("/", any(proxy_handler))
-        .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
+        .layer(RequestBodyLimitLayer::new(max_body_size))
         .with_state(state)
 }
 
@@ -584,6 +614,8 @@ async fn shutdown_signal(handle: Handle) {
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls ring crypto provider");
@@ -595,8 +627,8 @@ async fn main() {
         )
         .init();
 
-    let cert_path = PathBuf::from(CERT_PATH);
-    let key_path = PathBuf::from(KEY_PATH);
+    let cert_path = PathBuf::from(&args.cert_path);
+    let key_path = PathBuf::from(&args.key_path);
 
     // Ensure a valid certificate exists before starting the server.
     match check_cert_expiry(&cert_path) {
@@ -609,7 +641,7 @@ async fn main() {
             );
         }
         None => {
-            generate_self_signed_cert(&cert_path, &key_path)
+            generate_self_signed_cert(&cert_path, &key_path, args.cert_validity_days)
                 .unwrap_or_else(|e| panic!("Failed to generate initial certificate: {e}"));
         }
     }
@@ -629,24 +661,33 @@ async fn main() {
     tokio::spawn(cert_renewal_task(
         cert_path.clone(),
         key_path.clone(),
+        args.cert_validity_days,
+        args.cert_check_interval_secs,
         tls_config.clone(),
     ));
 
-    let app = build_router();
-    let addr = SocketAddr::from((HTTPS_BIND, HTTPS_PORT));
+    let app = build_router(
+        args.upstream_host.clone(),
+        args.upstream_port,
+        args.max_body_size,
+    );
+
+    let listen_addr: SocketAddr = format!("{}:{}", args.listen_host, args.listen_port)
+        .parse()
+        .unwrap_or_else(|e| panic!("Invalid listen address {}:{}: {e}", args.listen_host, args.listen_port));
 
     let handle = Handle::new();
     tokio::spawn(shutdown_signal(handle.clone()));
 
     info!("VibeVoice TLS Proxy ready");
-    info!("  HTTPS: https://0.0.0.0:{HTTPS_PORT}");
-    info!("  Upstream: http://{UPSTREAM_HOST}:{UPSTREAM_PORT}");
+    info!("  HTTPS: https://{}:{}", args.listen_host, args.listen_port);
+    info!("  Upstream: http://{}:{}", args.upstream_host, args.upstream_port);
 
-    axum_server::bind_rustls(addr, tls_config)
+    axum_server::bind_rustls(listen_addr, tls_config)
         .handle(handle)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
-        .unwrap_or_else(|e| panic!("HTTPS server failed on {addr}: {e}"));
+        .unwrap_or_else(|e| panic!("HTTPS server failed on {listen_addr}: {e}"));
 
     info!("Reverse proxy stopped");
 }
