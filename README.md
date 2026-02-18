@@ -8,32 +8,17 @@ Secure, queue-based ASR server wrapping Microsoft's [VibeVoice-ASR-7B](https://g
 Internet (HTTPS :42862) -> vvv_proxy (self-signed TLS) -> FastAPI (:54912 127.0.0.1) -> vLLM (:37845 127.0.0.1)
 ```
 
-## Quick Start (Development)
+## Setup
 
-```bash
-# Install dependencies
-uv sync
+All steps run from `~/Desktop/vibe-voice-vendor` on the `rtx5090` machine as user `user`.
 
-# Generate a token
-uv run python -m scripts.generate_token
-
-# Set environment variables
-export VVV_JWT_PUBLIC_KEY_FILE='keys/public.pem'
-export VVV_VLLM_BASE_URL='http://localhost:37845'
-
-# Start the server
-uv run python -m server
-```
-
-## Deployment (Ubuntu 24.04 + RTX 5090)
-
-### 1. Start vLLM in Docker
+### 1. Clone VibeVoice and start vLLM in Docker
 
 Following [Microsoft's official instructions](https://github.com/microsoft/VibeVoice/blob/main/docs/vibevoice-vllm-asr.md):
 
 ```bash
+cd ~/Desktop/vibe-voice-vendor
 git clone https://github.com/microsoft/VibeVoice.git
-cd VibeVoice
 
 docker run -d --gpus all --name vibevoice-vllm \
   --ipc=host \
@@ -41,7 +26,7 @@ docker run -d --gpus all --name vibevoice-vllm \
   -p 127.0.0.1:37845:8000 \
   -e VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64 \
   -e PYTORCH_ALLOC_CONF=expandable_segments:True \
-  -v $(pwd):/app \
+  -v ~/Desktop/vibe-voice-vendor/VibeVoice:/app \
   -w /app \
   --entrypoint bash \
   vllm/vllm-openai:v0.15.1 \
@@ -51,71 +36,49 @@ docker run -d --gpus all --name vibevoice-vllm \
 docker logs -f vibevoice-vllm
 ```
 
-### 2. Install the ASR server
+The `VibeVoice/` directory is in `.gitignore`.
+
+### 2. Install dependencies and generate a token
 
 ```bash
-sudo mkdir -p /opt/vibe-voice-vendor
-
-cd /opt/vibe-voice-vendor
-git clone <repo-url> .
+cd ~/Desktop/vibe-voice-vendor
 uv sync --no-dev
 
 # Generate key pair and token
-uv run python -m scripts.generate_token
-# Note the public key path for .env
+uv run python -m scripts.generate_token --keys-dir keys --subject user
 
-cp deploy/env.example .env
-# Edit .env with your values (set VVV_JWT_PUBLIC_KEY_FILE)
+# Create an empty revocation file
+touch revoked_tokens.txt
 ```
+
+The token is saved to `keys/token.txt` for you to copy to your client machine. The `keys/` directory and `revoked_tokens.txt` are in `.gitignore`.
 
 ### 3. Build the TLS reverse proxy
 
-No global installs required. The proxy generates self-signed certificates automatically on first run.
-
 ```bash
-cd /opt/vibe-voice-vendor/rust_proxy
+cd ~/Desktop/vibe-voice-vendor/rust_proxy
 cargo build --release
-# Binary is at: target/release/vvv_proxy
 ```
 
-### 4. Start the server via systemd
+The binary is at `rust_proxy/target/release/vvv_proxy`. Self-signed certificates are auto-generated on first run at `certs/self-signed/`.
+
+### 4. Install user systemd services
+
+Both services run as user-level systemd units (same pattern as ollama). They start automatically on login.
 
 ```bash
-sudo cp deploy/vibevoice-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now vibevoice-server
+cp deploy/vibevoice-server.service ~/.config/systemd/user/
+cp deploy/vibevoice-proxy.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now vibevoice-server
+systemctl --user enable --now vibevoice-proxy
 ```
 
-### 5. Start the TLS proxy
+Verify both are running:
 
 ```bash
-cd /opt/vibe-voice-vendor/rust_proxy
-./target/release/vvv_proxy
-# Listens on https://0.0.0.0:42862, proxies to http://127.0.0.1:54912
-# Self-signed cert auto-generated at certs/self-signed/
-```
-
-## Client Installation
-
-The `vvv` CLI is included in the project. Install it on any client machine with [uv](https://docs.astral.sh/uv/):
-
-```bash
-# Clone the repo
-git clone <repo-url>
-cd vibe-voice-vendor
-
-# Install (creates the vvv command)
-uv sync --no-dev
-
-# Verify it works
-uv run vvv --help
-```
-
-If you want `vvv` available globally without the `uv run` prefix, install the package into an isolated tool environment:
-
-```bash
-uv tool install .
-vvv --help
+systemctl --user status vibevoice-server
+systemctl --user status vibevoice-proxy
 ```
 
 ## Client Usage
@@ -124,17 +87,19 @@ vvv --help
 
 ```bash
 # Transcribe a file
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe recording.mp3
 
 # With hotwords
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --hotwords "VibeVoice,ASR"
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe recording.mp3 --hotwords "VibeVoice,ASR"
 
 # Save to file
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --output transcript.txt
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe recording.mp3 --output transcript.txt
 
 # Check queue status
-vvv --server https://your-server:42862 --token YOUR_TOKEN status
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure status
 ```
+
+`--insecure` skips TLS verification for the self-signed certificate. Alternatively, use `--ca-cert certs/self-signed/fullchain.pem` to pin the cert.
 
 ### Python Library
 
@@ -145,8 +110,9 @@ from client.models import EventType
 
 async def main():
     client = VibevoiceClient(
-        base_url="https://your-server:42862",
+        base_url="https://rtx5090:42862",
         token="YOUR_TOKEN",
+        verify="certs/self-signed/fullchain.pem",
     )
 
     async for event in client.transcribe("recording.mp3"):
@@ -170,22 +136,33 @@ asyncio.run(main())
 
 ## Configuration
 
-All configuration via environment variables with `VVV_` prefix. See `deploy/env.example` for the full list.
+All server arguments are required and passed via CLI flags. See `deploy/env.example` for the full reference.
 
 ## Token Management
 
 ```bash
 # Generate a key pair and token (first run creates keys/ directory)
-uv run python -m scripts.generate_token
+uv run python -m scripts.generate_token --keys-dir keys --subject user
 
-# Generate a token for a specific user
-uv run python -m scripts.generate_token --subject alice
+# Token is saved to keys/token.txt — copy it to your client machine
 
-# Point the server at the public key
-export VVV_JWT_PUBLIC_KEY_FILE=keys/public.pem
+# To revoke a token, decode its JTI and add it to the revocation file:
+python -c "import jwt; print(jwt.decode('TOKEN', options={'verify_signature': False})['jti'])"
+echo "JTI_VALUE" >> revoked_tokens.txt
+```
 
-# To revoke a token, decode its JTI and add it to a revocation file:
-# python -c "import jwt; print(jwt.decode('TOKEN', options={'verify_signature': False})['jti'])"
-# echo "JTI_VALUE" >> revoked.txt
-# export VVV_REVOKED_TOKENS_FILE=revoked.txt
+## Service Management
+
+```bash
+# View logs
+journalctl --user -u vibevoice-server -f
+journalctl --user -u vibevoice-proxy -f
+
+# Restart
+systemctl --user restart vibevoice-server
+systemctl --user restart vibevoice-proxy
+
+# Stop
+systemctl --user stop vibevoice-server
+systemctl --user stop vibevoice-proxy
 ```

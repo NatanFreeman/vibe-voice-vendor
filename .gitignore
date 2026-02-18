@@ -8,3 +8,6 @@ __pycache__/
 .env
 keys/
 certs/
+VibeVoice/
+revoked_tokens.txt
+rust_proxy/target/
