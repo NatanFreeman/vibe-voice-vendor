@@ -11,6 +11,5 @@ class Settings(BaseModel):
     revoked_tokens_file: str
     require_https: bool
     vllm_model_name: str
-    vllm_max_tokens: int
     vllm_temperature: float
     vllm_top_p: float

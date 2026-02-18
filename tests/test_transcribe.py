@@ -75,7 +75,6 @@ def _make_all_settings(tmp_path: Path, **overrides: object) -> Settings:
         "revoked_tokens_file": str(revoked_file),
         "require_https": False,
         "vllm_model_name": "vibevoice",
-        "vllm_max_tokens": 65536,
         "vllm_temperature": 0.0,
         "vllm_top_p": 1.0,
     }

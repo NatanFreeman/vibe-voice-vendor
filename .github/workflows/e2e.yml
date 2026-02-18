@@ -56,7 +56,6 @@ jobs:
             --revoked-tokens-file "${{ runner.temp }}/revoked_tokens.txt" \
             --require-https false \
             --vllm-model-name vibevoice \
-            --vllm-max-tokens 65536 \
             --vllm-temperature 0.0 \
             --vllm-top-p 1.0 &
 

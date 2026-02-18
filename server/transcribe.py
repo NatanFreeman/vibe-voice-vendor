@@ -21,7 +21,6 @@ async def process_transcription_job(
         audio_mime=job.audio_mime,
         audio_duration=job.audio_duration_seconds,
         hotwords=job.hotwords,
-        max_tokens=config.vllm_max_tokens,
         temperature=config.vllm_temperature,
         top_p=config.vllm_top_p,
     ):

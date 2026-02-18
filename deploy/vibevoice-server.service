@@ -16,7 +16,6 @@ ExecStart=%h/Desktop/vibe-voice-vendor/.venv/bin/python -m server \
     --revoked-tokens-file %h/Desktop/vibe-voice-vendor/revoked_tokens.txt \
     --require-https true \
     --vllm-model-name vibevoice \
-    --vllm-max-tokens 65536 \
     --vllm-temperature 0.0 \
     --vllm-top-p 1.0
 Restart=on-failure

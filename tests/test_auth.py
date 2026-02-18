@@ -37,7 +37,6 @@ def _make_settings(tmp_path: object, public_pem: bytes, revoked_tokens_file: str
         revoked_tokens_file=revoked_tokens_file,
         require_https=False,
         vllm_model_name="vibevoice",
-        vllm_max_tokens=65536,
         vllm_temperature=0.0,
         vllm_top_p=1.0,
     )
@@ -86,7 +85,6 @@ def test_no_public_key_configured(tmp_path: object) -> None:
         revoked_tokens_file=str(revoked_file),
         require_https=False,
         vllm_model_name="vibevoice",
-        vllm_max_tokens=65536,
         vllm_temperature=0.0,
         vllm_top_p=1.0,
     )
