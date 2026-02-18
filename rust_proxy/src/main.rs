@@ -5,7 +5,7 @@
 //! and hot-reloads them on expiry with zero downtime.
 //!
 //! Architecture:
-//!     Internet --> vvv_proxy :7853 (HTTPS, 0.0.0.0) --> 127.0.0.1:8080 (FastAPI)
+//!     Internet --> vvv_proxy :42862 (HTTPS, 0.0.0.0) --> 127.0.0.1:54912 (FastAPI)
 
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
@@ -43,11 +43,11 @@ use x509_parser::pem::Pem;
 
 /// Upstream FastAPI server address. Always localhost, never exposed to the network.
 const UPSTREAM_HOST: &str = "127.0.0.1";
-const UPSTREAM_PORT: u16 = 8080;
+const UPSTREAM_PORT: u16 = 54912;
 
 /// HTTPS listener. Binds to all interfaces on a fixed port.
 const HTTPS_BIND: [u8; 4] = [0, 0, 0, 0];
-const HTTPS_PORT: u16 = 7853;
+const HTTPS_PORT: u16 = 42862;
 
 /// Request body limit in bytes: 500 MB (matches server's VVV_MAX_AUDIO_BYTES default).
 const MAX_BODY_SIZE: usize = 500 * 1024 * 1024;

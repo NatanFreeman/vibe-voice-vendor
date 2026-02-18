@@ -30,7 +30,7 @@
     },
     "forwardPorts": [
         3000,
-        8000,
+        37845,
         8501
     ],
     "portsAttributes": {

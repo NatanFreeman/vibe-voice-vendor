@@ -16,7 +16,7 @@
     }
 
     # Reverse proxy to FastAPI (SSE-friendly)
-    reverse_proxy localhost:8080 {
+    reverse_proxy localhost:54912 {
         flush_interval -1
     }
 }

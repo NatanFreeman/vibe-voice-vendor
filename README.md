@@ -5,7 +5,7 @@ Secure, queue-based ASR server wrapping Microsoft's [VibeVoice-ASR-7B](https://g
 ## Architecture
 
 ```
-Internet (HTTPS :7853) -> vvv_proxy (self-signed TLS) -> FastAPI (:8080 127.0.0.1) -> vLLM (:8000 127.0.0.1)
+Internet (HTTPS :42862) -> vvv_proxy (self-signed TLS) -> FastAPI (:54912 127.0.0.1) -> vLLM (:37845 127.0.0.1)
 ```
 
 ## Quick Start (Development)
@@ -19,7 +19,7 @@ uv run python -m scripts.generate_token
 
 # Set environment variables
 export VVV_TOKEN_HASHES_ENV='<hash from above>'
-export VVV_VLLM_BASE_URL='http://localhost:8000'
+export VVV_VLLM_BASE_URL='http://localhost:37845'
 
 # Start the server
 uv run python -m server
@@ -38,7 +38,7 @@ cd VibeVoice
 docker run -d --gpus all --name vibevoice-vllm \
   --ipc=host \
   --restart unless-stopped \
-  -p 127.0.0.1:8000:8000 \
+  -p 127.0.0.1:37845:8000 \
   -e VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64 \
   -e PYTORCH_ALLOC_CONF=expandable_segments:True \
   -v $(pwd):/app \
@@ -91,7 +91,7 @@ sudo systemctl enable --now vibevoice-server
 ```bash
 cd /opt/vibe-voice-vendor/rust_proxy
 ./target/release/vvv_proxy
-# Listens on https://0.0.0.0:7853, proxies to http://127.0.0.1:8080
+# Listens on https://0.0.0.0:42862, proxies to http://127.0.0.1:54912
 # Self-signed cert auto-generated at certs/self-signed/
 ```
 
@@ -124,16 +124,16 @@ vvv --help
 
 ```bash
 # Transcribe a file
-vvv --server https://your-server:7853 --token YOUR_TOKEN transcribe recording.mp3
+vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3
 
 # With hotwords
-vvv --server https://your-server:7853 --token YOUR_TOKEN transcribe recording.mp3 --hotwords "VibeVoice,ASR"
+vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --hotwords "VibeVoice,ASR"
 
 # Save to file
-vvv --server https://your-server:7853 --token YOUR_TOKEN transcribe recording.mp3 --output transcript.txt
+vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --output transcript.txt
 
 # Check queue status
-vvv --server https://your-server:7853 --token YOUR_TOKEN status
+vvv --server https://your-server:42862 --token YOUR_TOKEN status
 ```
 
 ### Python Library
@@ -145,7 +145,7 @@ from client.models import EventType
 
 async def main():
     client = VibevoiceClient(
-        base_url="https://your-server:7853",
+        base_url="https://your-server:42862",
         token="YOUR_TOKEN",
     )
 
