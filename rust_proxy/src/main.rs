@@ -25,7 +25,7 @@ use axum_server::Handle;
 use futures::future::FutureExt;
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use http_body_util::BodyExt;
+use http_body_util::BodyDataStream;
 use tokio::signal;
 use tokio_tungstenite::tungstenite::{
     self,
@@ -402,19 +402,17 @@ async fn http_proxy(state: AppState, req: Request, client_addr: SocketAddr) -> R
         HeaderValue::from_static("https"),
     );
 
-    let body_bytes = match req.into_body().collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            error!(error = %e, "Failed to read request body");
-            return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response();
-        }
-    };
+    // Stream request body to upstream without buffering (avoids holding up to 500 MB in memory).
+    let body_stream = BodyDataStream::new(req.into_body());
+    let reqwest_body = reqwest::Body::wrap_stream(body_stream);
+    // Remove Content-Length since the body is now streamed with chunked encoding.
+    upstream_headers.remove(header::CONTENT_LENGTH);
 
     let upstream_response = match state
         .http_client
         .request(method, &target_url)
         .headers(upstream_headers)
-        .body(body_bytes)
+        .body(reqwest_body)
         .send()
         .await
     {
@@ -434,11 +432,7 @@ async fn http_proxy(state: AppState, req: Request, client_addr: SocketAddr) -> R
     let status = upstream_response.status();
     let mut response_headers = HeaderMap::new();
 
-    for (name, value) in security_headers() {
-        response_headers.insert(name, value);
-    }
-
-    // Copy upstream headers. Strip hop-by-hop, content-length (axum recalculates
+    // Copy upstream headers first. Strip hop-by-hop, content-length (axum recalculates
     // for streamed bodies), and server (privacy). Use append() to preserve
     // multiple Set-Cookie headers.
     for (key, value) in upstream_response.headers() {
@@ -449,6 +443,12 @@ async fn http_proxy(state: AppState, req: Request, client_addr: SocketAddr) -> R
         {
             response_headers.append(key.clone(), value.clone());
         }
+    }
+
+    // Inject security headers last — insert() replaces any upstream duplicates,
+    // ensuring the proxy's security policy always wins.
+    for (name, value) in security_headers() {
+        response_headers.insert(name, value);
     }
 
     // Stream the body without buffering — critical for SSE (flush_interval -1).

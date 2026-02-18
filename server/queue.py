@@ -14,9 +14,6 @@ from server.models import JobInfo, JobStatus, QueueStatusResponse
 
 logger = logging.getLogger(__name__)
 
-# Sentinel to signal end-of-stream
-STREAM_END: None = None
-
 
 @dataclass
 class TranscriptionJob:
@@ -124,6 +121,8 @@ class TranscriptionQueue:
             try:
                 if self._process_fn:
                     await self._process_fn(job)
+                else:
+                    await job.chunk_queue.put(None)
                 job.status = JobStatus.COMPLETED
             except Exception as exc:
                 job.status = JobStatus.FAILED

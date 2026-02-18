@@ -33,7 +33,10 @@ async def transcribe(
 
     audio_b64 = encode_audio_base64(audio_bytes)
     mime_type = guess_mime_type(audio.filename)
-    duration = await probe_duration(audio_bytes)
+    try:
+        duration = await probe_duration(audio_bytes)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot read audio: {exc}") from None
 
     job = TranscriptionJob(
         token_fingerprint=token_fingerprint,

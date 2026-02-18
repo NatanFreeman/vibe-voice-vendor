@@ -10,9 +10,10 @@ from client.models import EventType, TranscriptionEvent
 
 
 class VibevoiceClient:
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(self, base_url: str, token: str, verify: bool | str = True) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
+        self._verify = verify
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
@@ -26,7 +27,7 @@ class VibevoiceClient:
         path = Path(audio_path)
 
         timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=self._verify) as client:
             with open(path, "rb") as f:
                 files = {"audio": (path.name, f, "application/octet-stream")}
                 data = {}
@@ -86,7 +87,7 @@ class VibevoiceClient:
 
     async def queue_status(self) -> dict[str, object]:
         """Get queue status for your token."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=self._verify) as client:
             resp = await client.get(
                 f"{self._base_url}/v1/queue/status",
                 headers=self._headers(),

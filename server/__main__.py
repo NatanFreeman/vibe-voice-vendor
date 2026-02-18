@@ -1,13 +1,14 @@
 import uvicorn
 
+from server.app import create_app
 from server.config import Settings
 
 
 def main() -> None:
     settings = Settings()
+    app = create_app(settings)
     uvicorn.run(
-        "server.app:create_app",
-        factory=True,
+        app,
         host=settings.server_host,
         port=settings.server_port,
         log_level="warning",

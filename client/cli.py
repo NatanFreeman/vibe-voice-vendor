@@ -21,9 +21,13 @@ async def _transcribe(
     try:
         async for event in client.transcribe(audio_path, hotwords):
             if event.event_type == EventType.QUEUE:
+                eta = (
+                    f"{event.estimated_wait_seconds:.0f}s"
+                    if event.estimated_wait_seconds is not None
+                    else "unknown"
+                )
                 print(
-                    f"[Queue] Position: {event.position}, "
-                    f"ETA: {event.estimated_wait_seconds:.0f}s",
+                    f"[Queue] Position: {event.position}, ETA: {eta}",
                     file=sys.stderr,
                 )
             elif event.event_type == EventType.DATA:
@@ -74,6 +78,9 @@ def main() -> None:
         default=os.environ.get("VVV_TOKEN"),
         help="Bearer token (default: VVV_TOKEN env var)",
     )
+    parser.add_argument(
+        "--insecure", action="store_true", help="Disable TLS certificate verification"
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -90,7 +97,9 @@ def main() -> None:
         print("Error: provide --token or set VVV_TOKEN env var", file=sys.stderr)
         sys.exit(1)
 
-    client = VibevoiceClient(base_url=args.server, token=args.token)
+    client = VibevoiceClient(
+        base_url=args.server, token=args.token, verify=not args.insecure
+    )
 
     if args.command == "transcribe":
         if not Path(args.file).exists():
