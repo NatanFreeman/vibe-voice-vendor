@@ -15,8 +15,8 @@ async def test_enqueue_and_position(queue: TranscriptionQueue) -> None:
     job1 = TranscriptionJob(token_fingerprint="user1111")
     job2 = TranscriptionJob(token_fingerprint="user2222")
 
-    await queue.enqueue(job1)
-    await queue.enqueue(job2)
+    queue.enqueue(job1)
+    queue.enqueue(job2)
 
     pos1, _ = queue.get_position_and_eta(job1.job_id)
     pos2, _ = queue.get_position_and_eta(job2.job_id)
@@ -29,8 +29,8 @@ async def test_queue_info_filters_by_fingerprint(queue: TranscriptionQueue) -> N
     job1 = TranscriptionJob(token_fingerprint="user1111")
     job2 = TranscriptionJob(token_fingerprint="user2222")
 
-    await queue.enqueue(job1)
-    await queue.enqueue(job2)
+    queue.enqueue(job1)
+    queue.enqueue(job2)
 
     info = queue.get_queue_info("user1111")
     assert len(info.your_jobs) == 1
@@ -50,7 +50,7 @@ async def test_worker_processes_job(queue: TranscriptionQueue) -> None:
     queue.start_worker()
 
     job = TranscriptionJob(token_fingerprint="user1111", audio_base64="test_data")
-    await queue.enqueue(job)
+    queue.enqueue(job)
 
     # Wait for processing
     chunk = await asyncio.wait_for(job.chunk_queue.get(), timeout=2.0)
@@ -70,7 +70,7 @@ async def test_worker_clears_audio_after_processing(queue: TranscriptionQueue) -
     queue.start_worker()
 
     job = TranscriptionJob(token_fingerprint="user1111", audio_base64="big_audio_data")
-    await queue.enqueue(job)
+    queue.enqueue(job)
 
     await asyncio.wait_for(job.chunk_queue.get(), timeout=2.0)
     # Give worker time to clean up
@@ -83,7 +83,7 @@ async def test_worker_clears_audio_after_processing(queue: TranscriptionQueue) -
 async def test_eta_estimation(queue: TranscriptionQueue) -> None:
     # With no history, default is 30s per job
     job = TranscriptionJob(token_fingerprint="user1111")
-    await queue.enqueue(job)
+    queue.enqueue(job)
 
     _, eta = queue.get_position_and_eta(job.job_id)
     assert eta == 30.0
@@ -97,7 +97,7 @@ async def test_failed_job_sends_sentinel(queue: TranscriptionQueue) -> None:
     queue.start_worker()
 
     job = TranscriptionJob(token_fingerprint="user1111")
-    await queue.enqueue(job)
+    queue.enqueue(job)
 
     sentinel = await asyncio.wait_for(job.chunk_queue.get(), timeout=2.0)
     assert sentinel is None

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -43,8 +44,8 @@ async def transcribe(
     )
 
     try:
-        await queue.enqueue(job)
-    except Exception:
+        queue.enqueue(job)
+    except asyncio.QueueFull:
         raise HTTPException(status_code=503, detail="Queue is full") from None
 
     async def event_stream() -> AsyncIterator[str]:
@@ -63,18 +64,6 @@ async def transcribe(
             chunk = await job.chunk_queue.get()
             if chunk is None:
                 break
-
-            # Update queue position if still queued
-            if job.status.value == "queued":
-                pos, eta = queue.get_position_and_eta(job.job_id)
-                if pos is not None:
-                    event = QueuePositionEvent(
-                        job_id=job.job_id,
-                        position=pos,
-                        estimated_wait_seconds=eta or 0.0,
-                    )
-                    yield f"event: queue\ndata: {event.model_dump_json()}\n\n"
-                continue
 
             chunk_event = TranscriptionChunkEvent(text=chunk)
             yield f"data: {chunk_event.model_dump_json()}\n\n"

@@ -387,7 +387,7 @@ async fn http_proxy(state: AppState, req: Request, client_addr: SocketAddr) -> R
     let mut upstream_headers = HeaderMap::new();
     for (key, value) in req.headers() {
         if !HOP_BY_HOP_HEADERS.contains(&key.as_str().to_lowercase().as_str()) {
-            upstream_headers.insert(key.clone(), value.clone());
+            upstream_headers.append(key.clone(), value.clone());
         }
     }
     if let Ok(host_val) = HeaderValue::from_str(&format!("{UPSTREAM_HOST}:{UPSTREAM_PORT}")) {

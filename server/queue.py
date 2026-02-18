@@ -56,9 +56,13 @@ class TranscriptionQueue:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
 
-    async def enqueue(self, job: TranscriptionJob) -> None:
+    def enqueue(self, job: TranscriptionJob) -> None:
+        """Add a job to the queue. Raises asyncio.QueueFull if at capacity."""
+        try:
+            self._pending.put_nowait(job.job_id)
+        except asyncio.QueueFull:
+            raise
         self._jobs[job.job_id] = job
-        await self._pending.put(job.job_id)
 
     def get_job(self, job_id: str) -> TranscriptionJob | None:
         return self._jobs.get(job_id)
