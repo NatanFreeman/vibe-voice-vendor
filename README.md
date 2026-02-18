@@ -31,11 +31,30 @@ docker run -d --gpus all --name vibevoice-vllm \
   -w /app \
   --entrypoint bash \
   vllm/vllm-openai:v0.14.1 \
-  -c "python3 /app/vllm_plugin/scripts/start_server.py"
+  -c '\
+    apt-get update && apt-get install -y ffmpeg libsndfile1 && \
+    pip install -e /app[vllm] && \
+    MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download(\"microsoft/VibeVoice-ASR\"))") && \
+    python3 -m vllm_plugin.tools.generate_tokenizer_files --output "$MODEL" && \
+    vllm serve "$MODEL" \
+      --served-model-name vibevoice \
+      --trust-remote-code \
+      --dtype bfloat16 \
+      --max-num-seqs 64 \
+      --max-model-len 65536 \
+      --gpu-memory-utilization 0.98 \
+      --no-enable-prefix-caching \
+      --enable-chunked-prefill \
+      --chat-template-content-format openai \
+      --tensor-parallel-size 1 \
+      --allowed-local-media-path /app \
+      --port 8000'
 
 # Watch startup progress (model download + tokenizer generation)
 docker logs -f vibevoice-vllm
 ```
+
+We replicate the steps from VibeVoice's `start_server.py` but override `--gpu-memory-utilization` from `0.8` to `0.98` — the script's default leaves insufficient memory for KV cache blocks after the model (18.22 GiB) and 61-minute audio profiling are loaded.
 
 Pinned versions: VibeVoice at `1807b858`, vLLM at `v0.14.1`. The VibeVoice plugin requires specific vLLM multimodal APIs (`PromptUpdateDetails`, `MultiModalKwargsItems`, `AudioMediaIO`) that only exist in `v0.11.1`–`v0.14.1`. The `VibeVoice/` directory is in `.gitignore`.
 
