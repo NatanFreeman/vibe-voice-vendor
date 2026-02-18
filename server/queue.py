@@ -23,6 +23,7 @@ class TranscriptionJob:
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     token_fingerprint: str = ""
     audio_base64: str = ""
+    audio_mime: str = "application/octet-stream"
     hotwords: str | None = None
     audio_duration_seconds: float = 0.0
     status: JobStatus = JobStatus.QUEUED

@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from server.audio import convert_audio_to_wav_base64
+from server.audio import encode_audio_base64, guess_mime_type, probe_duration
 from server.auth import verify_token
 from server.models import ErrorEvent, QueuePositionEvent, TranscriptionChunkEvent
 from server.queue import TranscriptionJob, TranscriptionQueue
@@ -30,11 +30,14 @@ async def transcribe(
     if len(audio_bytes) == 0:
         raise HTTPException(status_code=400, detail="Empty audio file")
 
-    wav_base64, duration = await convert_audio_to_wav_base64(audio_bytes)
+    audio_b64 = encode_audio_base64(audio_bytes)
+    mime_type = guess_mime_type(audio.filename)
+    duration = await probe_duration(audio_bytes)
 
     job = TranscriptionJob(
         token_fingerprint=token_fingerprint,
-        audio_base64=wav_base64,
+        audio_base64=audio_b64,
+        audio_mime=mime_type,
         hotwords=hotwords,
         audio_duration_seconds=duration,
     )

@@ -4,9 +4,9 @@ import struct
 
 import pytest
 
-from server.audio import _wav_duration, convert_audio_to_wav_base64
+from server.audio import encode_audio_base64, guess_mime_type, probe_duration
 
-has_ffmpeg = shutil.which("ffmpeg") is not None
+has_ffprobe = shutil.which("ffprobe") is not None
 
 
 def _make_wav(
@@ -39,39 +39,60 @@ def _make_wav(
     return header + audio_data
 
 
-def test_wav_duration_one_second() -> None:
-    wav = _make_wav(sample_rate=16000, num_samples=16000)
-    duration = _wav_duration(wav)
-    assert abs(duration - 1.0) < 0.001
+def test_encode_audio_base64_roundtrip() -> None:
+    raw = b"hello audio bytes"
+    encoded = encode_audio_base64(raw)
+    assert base64.b64decode(encoded) == raw
 
 
-def test_wav_duration_half_second() -> None:
-    wav = _make_wav(sample_rate=16000, num_samples=8000)
-    duration = _wav_duration(wav)
-    assert abs(duration - 0.5) < 0.001
+def test_guess_mime_type_wav() -> None:
+    assert guess_mime_type("recording.wav") == "audio/wav"
 
 
-def test_wav_duration_too_short() -> None:
-    with pytest.raises(RuntimeError, match="too short"):
-        _wav_duration(b"short")
+def test_guess_mime_type_mp3() -> None:
+    assert guess_mime_type("song.mp3") == "audio/mpeg"
 
 
-@pytest.mark.skipif(not has_ffmpeg, reason="FFmpeg not installed")
-async def test_convert_audio_ffmpeg() -> None:
-    """Test FFmpeg conversion with a valid WAV input."""
-    wav_bytes = _make_wav(sample_rate=44100, num_samples=44100)
-    wav_b64, duration = await convert_audio_to_wav_base64(wav_bytes)
+def test_guess_mime_type_flac() -> None:
+    assert guess_mime_type("track.flac") == "audio/flac"
 
-    # Should produce valid base64
-    decoded = base64.b64decode(wav_b64)
-    assert decoded[:4] == b"RIFF"
 
-    # Duration should be approximately 1 second
+def test_guess_mime_type_ogg() -> None:
+    assert guess_mime_type("voice.ogg") == "audio/ogg"
+
+
+def test_guess_mime_type_opus() -> None:
+    assert guess_mime_type("voice.opus") == "audio/ogg"
+
+
+def test_guess_mime_type_unknown() -> None:
+    assert guess_mime_type("data.xyz") == "application/octet-stream"
+
+
+def test_guess_mime_type_none() -> None:
+    assert guess_mime_type(None) == "application/octet-stream"
+
+
+def test_guess_mime_type_case_insensitive() -> None:
+    assert guess_mime_type("FILE.WAV") == "audio/wav"
+    assert guess_mime_type("track.MP3") == "audio/mpeg"
+
+
+@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
+async def test_probe_duration_wav() -> None:
+    wav_bytes = _make_wav(sample_rate=16000, num_samples=16000)
+    duration = await probe_duration(wav_bytes)
     assert abs(duration - 1.0) < 0.1
 
 
-@pytest.mark.skipif(not has_ffmpeg, reason="FFmpeg not installed")
-async def test_convert_invalid_audio() -> None:
-    """FFmpeg should fail on garbage input."""
-    with pytest.raises(RuntimeError, match="FFmpeg conversion failed"):
-        await convert_audio_to_wav_base64(b"not audio data at all")
+@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
+async def test_probe_duration_half_second() -> None:
+    wav_bytes = _make_wav(sample_rate=16000, num_samples=8000)
+    duration = await probe_duration(wav_bytes)
+    assert abs(duration - 0.5) < 0.1
+
+
+@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
+async def test_probe_duration_invalid() -> None:
+    with pytest.raises(RuntimeError, match="ffprobe failed"):
+        await probe_duration(b"not audio data at all")

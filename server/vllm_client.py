@@ -10,26 +10,41 @@ async def stream_transcription(
     vllm_base_url: str,
     model_name: str,
     audio_base64: str,
+    audio_mime: str,
+    audio_duration: float,
     hotwords: str | None,
     max_tokens: int,
     temperature: float,
     top_p: float,
 ) -> AsyncIterator[str]:
     """Stream transcription from vLLM via OpenAI-compatible SSE endpoint."""
-    audio_url = f"data:audio/wav;base64,{audio_base64}"
+    audio_url = f"data:{audio_mime};base64,{audio_base64}"
 
     content: list[dict[str, object]] = [
         {"type": "audio_url", "audio_url": {"url": audio_url}},
     ]
 
-    text_prompt = "Transcribe the audio."
+    text_prompt = f"This is a {audio_duration:.2f} seconds audio, "
     if hotwords:
-        text_prompt = f"Transcribe the audio. Hotwords: {hotwords}"
+        text_prompt += f"with extra info: {hotwords}\n\n"
+    text_prompt += (
+        "please transcribe it with these keys: "
+        "Start time, End time, Speaker ID, Content"
+    )
     content.append({"type": "text", "text": text_prompt})
 
     payload = {
         "model": model_name,
-        "messages": [{"role": "user", "content": content}],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant that transcribes audio "
+                    "input into text output in JSON format."
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
         "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": top_p,
@@ -48,7 +63,7 @@ async def stream_transcription(
         async for line in response.aiter_lines():
             if not line.startswith("data: "):
                 continue
-            data_str = line[len("data: ") :]
+            data_str = line[len("data: "):]
             if data_str.strip() == "[DONE]":
                 return
             try:

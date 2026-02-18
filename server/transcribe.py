@@ -19,6 +19,8 @@ async def process_transcription_job(
             vllm_base_url=config.vllm_base_url,
             model_name=config.vllm_model_name,
             audio_base64=job.audio_base64,
+            audio_mime=job.audio_mime,
+            audio_duration=job.audio_duration_seconds,
             hotwords=job.hotwords,
             max_tokens=config.vllm_max_tokens,
             temperature=config.vllm_temperature,
