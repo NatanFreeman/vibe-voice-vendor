@@ -19,6 +19,7 @@ Following [Microsoft's official instructions](https://github.com/microsoft/VibeV
 ```bash
 cd ~/Desktop/vibe-voice-vendor
 git clone https://github.com/microsoft/VibeVoice.git
+git -C VibeVoice checkout 1807b858
 
 docker run -d --gpus all --name vibevoice-vllm \
   --ipc=host \
@@ -29,14 +30,14 @@ docker run -d --gpus all --name vibevoice-vllm \
   -v ~/Desktop/vibe-voice-vendor/VibeVoice:/app \
   -w /app \
   --entrypoint bash \
-  vllm/vllm-openai:v0.15.1 \
+  vllm/vllm-openai:v0.11.0 \
   -c "python3 /app/vllm_plugin/scripts/start_server.py"
 
 # Watch startup progress (model download + tokenizer generation)
 docker logs -f vibevoice-vllm
 ```
 
-The `VibeVoice/` directory is in `.gitignore`.
+Pinned versions: VibeVoice at `1807b858`, vLLM at `v0.11.0`. The VibeVoice plugin requires specific vLLM multimodal APIs (`PromptUpdateDetails`, `MultiModalKwargsItems`, `AudioMediaIO`) that only exist in `v0.10.2`–`v0.11.0`. The `VibeVoice/` directory is in `.gitignore`.
 
 ### 2. Install dependencies and generate a token
 
