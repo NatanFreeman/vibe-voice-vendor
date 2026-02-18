@@ -1,0 +1,133 @@
+name: E2E Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    name: End-to-end test
+    runs-on: ubuntu-24.04
+
+    env:
+      MOCK_VLLM_PORT: 9100
+      VVV_PORT: 9101
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate auth token
+        id: auth
+        run: |
+          OUTPUT=$(uv run python -m scripts.generate_token)
+          TOKEN=$(echo "$OUTPUT" | grep 'Token' | sed 's/.*:  //')
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          # Bcrypt hashes contain $ signs — use heredoc delimiter
+          {
+            echo 'hash<<HASH_EOF'
+            echo "$OUTPUT" | grep 'Hash' | sed 's/.*:  //'
+            echo 'HASH_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate test audio (1s tone FLAC)
+        run: ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -ar 16000 -ac 1 test_audio.flac
+
+      - name: Start mock vLLM server
+        run: uv run python tests/e2e/mock_vllm.py &
+
+      - name: Start VVV server
+        env:
+          VVV_TOKEN_HASHES_ENV: ${{ steps.auth.outputs.hash }}
+          VVV_VLLM_BASE_URL: http://127.0.0.1:${{ env.MOCK_VLLM_PORT }}
+          VVV_SERVER_PORT: ${{ env.VVV_PORT }}
+        run: uv run python -m server &
+
+      - name: Wait for servers
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf "http://127.0.0.1:${MOCK_VLLM_PORT}/health" > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf "http://127.0.0.1:${MOCK_VLLM_PORT}/health" > /dev/null || { echo "Mock vLLM failed to start"; exit 1; }
+
+          for i in $(seq 1 30); do
+            curl -sf "http://127.0.0.1:${VVV_PORT}/health" > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf "http://127.0.0.1:${VVV_PORT}/health" > /dev/null || { echo "VVV server failed to start"; exit 1; }
+
+      - name: "Test: health endpoint reports vLLM ok"
+        run: |
+          HEALTH=$(curl -sf "http://127.0.0.1:${VVV_PORT}/health")
+          echo "$HEALTH"
+          STATUS=$(echo "$HEALTH" | jq -r '.status')
+          VLLM=$(echo "$HEALTH" | jq -r '.vllm')
+          [ "$STATUS" = "ok" ] || { echo "FAIL: status=$STATUS"; exit 1; }
+          [ "$VLLM" = "ok" ] || { echo "FAIL: vllm=$VLLM"; exit 1; }
+
+      - name: "Test: transcribe audio via CLI"
+        run: |
+          OUTPUT=$(uv run vvv \
+            --server "http://127.0.0.1:${VVV_PORT}" \
+            --token "${{ steps.auth.outputs.token }}" \
+            transcribe test_audio.flac)
+          echo "Output: $OUTPUT"
+          EXPECTED="Hello, this is a test of the VibeVoice transcription system."
+          [ "$OUTPUT" = "$EXPECTED" ] || { echo "FAIL: expected '$EXPECTED', got '$OUTPUT'"; exit 1; }
+
+      - name: "Test: transcribe with hotwords"
+        run: |
+          OUTPUT=$(uv run vvv \
+            --server "http://127.0.0.1:${VVV_PORT}" \
+            --token "${{ steps.auth.outputs.token }}" \
+            transcribe test_audio.flac --hotwords "VibeVoice,ASR")
+          echo "Output: $OUTPUT"
+          echo "$OUTPUT" | grep -q "VibeVoice" || { echo "FAIL: missing transcription text"; exit 1; }
+
+      - name: "Test: transcribe with --output writes file"
+        run: |
+          uv run vvv \
+            --server "http://127.0.0.1:${VVV_PORT}" \
+            --token "${{ steps.auth.outputs.token }}" \
+            transcribe test_audio.flac --output transcript.txt
+          [ -f transcript.txt ] || { echo "FAIL: output file not created"; exit 1; }
+          grep -q "Hello" transcript.txt || { echo "FAIL: output file missing text"; exit 1; }
+
+      - name: "Test: queue status with valid token"
+        run: |
+          STATUS=$(curl -sf \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            "http://127.0.0.1:${VVV_PORT}/v1/queue/status")
+          echo "$STATUS"
+          TOTAL=$(echo "$STATUS" | jq -r '.total_queued')
+          [ "$TOTAL" = "0" ] || { echo "FAIL: expected 0 queued, got $TOTAL"; exit 1; }
+
+      - name: "Test: bad token rejected"
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer wrong-token" \
+            "http://127.0.0.1:${VVV_PORT}/v1/queue/status")
+          [ "$CODE" = "401" ] || { echo "FAIL: expected 401, got $CODE"; exit 1; }
+
+      - name: "Test: missing token rejected"
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:${VVV_PORT}/v1/queue/status")
+          [ "$CODE" = "401" ] || [ "$CODE" = "403" ] || { echo "FAIL: expected 401 or 403, got $CODE"; exit 1; }
+
+      - name: "Test: health requires no auth"
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:${VVV_PORT}/health")
+          [ "$CODE" = "200" ] || { echo "FAIL: expected 200, got $CODE"; exit 1; }
