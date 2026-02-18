@@ -18,7 +18,7 @@ Following [Microsoft's official instructions](https://github.com/microsoft/VibeV
 
 ```bash
 cd ~/Desktop/vibe-voice-vendor
-git clone https://github.com/microsoft/VibeVoice.git
+git clone https://github.com/microsoft/VibeVoice.git --recurse-submodules
 git -C VibeVoice checkout 1807b858
 
 docker run -d --gpus all --name vibevoice-vllm \
