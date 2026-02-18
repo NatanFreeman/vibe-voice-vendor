@@ -10,10 +10,16 @@ from client.models import EventType, TranscriptionEvent
 
 
 class VibevoiceClient:
-    def __init__(self, base_url: str, token: str, verify: bool | str = True) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        verify: bool | str = True,
+        ca_cert: str | None = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
-        self._verify = verify
+        self._verify: bool | str = ca_cert if ca_cert is not None else verify
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}

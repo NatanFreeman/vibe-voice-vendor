@@ -81,6 +81,9 @@ def main() -> None:
     parser.add_argument(
         "--insecure", action="store_true", help="Disable TLS certificate verification"
     )
+    parser.add_argument(
+        "--ca-cert", default=None, help="Path to CA certificate for self-signed TLS"
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -97,8 +100,15 @@ def main() -> None:
         print("Error: provide --token or set VVV_TOKEN env var", file=sys.stderr)
         sys.exit(1)
 
+    if args.ca_cert and not Path(args.ca_cert).exists():
+        print(f"CA cert file not found: {args.ca_cert}", file=sys.stderr)
+        sys.exit(1)
+
     client = VibevoiceClient(
-        base_url=args.server, token=args.token, verify=not args.insecure
+        base_url=args.server,
+        token=args.token,
+        verify=not args.insecure,
+        ca_cert=args.ca_cert,
     )
 
     if args.command == "transcribe":
