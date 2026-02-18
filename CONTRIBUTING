@@ -1,0 +1,77 @@
+# Contributing Guide
+
+This project is built on a philosophy of correctness, pedanticness, and zero fault tolerance. If there is an unexpected event, an exception should be raised explaining exactly what went wrong. Assert statements should be used frequently to ensure correct state with very specific information when things go wrong.
+
+## Python & Type Safety
+
+Type safety is the cornerstone of our correctness philosophy. We leverage Python's type hints and static analysis tools to enforce strict boundaries and logical validity.
+
+- **No `Any`**: The usage of `Any` is strictly prohibited. If a type is truly unknown, use `object` and narrow it safely before use.
+- **Strict Typing**: All function parameters, return values, and non-trivial variables must have explicit type annotations. Use `mypy` strict mode.
+- **Enums & Literals**: Use `enum.Enum` or `typing.Literal` instead of magic strings to define finite sets of values.
+- **Type Narrowing**: Use `isinstance()` checks, `TypeGuard`, and `assert_type()` to ensure runtime correctness matches static type expectations.
+
+## Explicitness
+
+The code should be as explicit as possible.
+
+- **Explicit Returns**: Always annotate the return type of functions, even if a type checker can infer it.
+- **No Wildcard Imports**: Never use `from module import *`. Always import names explicitly.
+- **Explicit Passing**: Pass dependencies and configuration explicitly rather than relying on implicit context or global state.
+
+## Documentation & Style
+
+- **Self-Documenting Code**: Variable and function names should be descriptive enough to explain their purpose.
+- **Comments**: Use comments sparingly and only to explain *why* a complex piece of logic exists, or to warn about specific edge cases.
+
+## Complexity & Structure
+
+- **Simplicity**: Avoid complexity and unnecessary logic. "The best line of code is the one that was never written."
+- **Atomic Modules**: Each module should have a single domain of concern. If a file is becoming too large, it likely handles too many responsibilities.
+- **Focused Functions**: Functions should be short and do one thing well.
+- **FastAPI & Server Logic**: Use FastAPI endpoints for all database and LLM operations. Keep the frontend-facing API layer lean and focused on request/response handling. Ensure proper error handling across the network boundary.
+
+## Assert Statements
+
+Assert statements are our primary defense against undefined state. They must provide complete diagnostic information.
+
+- **Always Include Values**: Assert messages must include both the actual value received and the expected value/condition.
+- **Use f-strings**: Construct messages with f-strings to embed runtime values: `f"Expected non-empty list, got: {arr!r} (length: {len(arr)})"`
+- **Use `repr()` for Objects**: Use `!r` or `repr()` for object/collection values to see the full structure.
+- **Be Specific**: State exactly what condition failed and where.
+
+**Good Examples:**
+```python
+assert isinstance(country, str), f"Expected country to be str, got: {type(country).__name__} (value: {country!r})"
+assert result.demographics.age > 0, f"Expected positive age, got: {result.demographics.age}"
+assert isinstance(events, list), f"Expected events to be list, got: {type(events).__name__} (value: {events!r})"
+```
+
+**Bad Examples:**
+```python
+assert isinstance(country, str), "Country must be a string"  # Missing actual value
+assert result.demographics.age > 0, "Invalid age"  # Not specific enough
+```
+
+## LLM Integration Patterns
+
+When working with LLM calls (via `call_llm` in `src/lib/adversarial/llm_client.py`):
+
+- **Tool Definitions**: Always define tools for structured output. Use descriptive names and comprehensive parameter descriptions.
+- **Temperature Selection**:
+  - `0.3-0.5`: Analytical tasks requiring consistency (long-term matching, analysis)
+  - `0.6-0.8`: Creative tasks requiring variety (short-term matching, hype generation)
+- **Result Validation**: Always assert that LLM results contain required fields before proceeding.
+- **Error Handling**: Wrap LLM calls in try/except with descriptive error messages.
+
+## Database Operations
+
+- **Parameterized Queries**: Always use parameterized queries to prevent SQL injection. Never use f-strings or string concatenation for SQL.
+- **JSON Parsing**: When retrieving JSON from the database, parse it immediately with `json.loads()` and validate the structure with asserts.
+- **Transactions**: Use transactions for batch operations that must succeed together.
+
+## Adding Features
+
+- **Minimal Changes**: Keep additions as minimal as possible.
+- **Refactoring**: Refactor existing logic only if it significantly improves ergonomics or correctness without altering external behavior (unless that is the goal).
+- **Zero Fault Tolerance**: New features must handle errors gracefully by crashing early with descriptive errors rather than proceeding in an undefined state.

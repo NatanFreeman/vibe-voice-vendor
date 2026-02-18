@@ -1,0 +1,44 @@
+{
+    "name": "dev",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "runArgs": [
+        "--add-host=host.docker.internal:host-gateway"
+    ],
+    "remoteUser": "vscode",
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "lts"
+        }
+    },
+    "remoteEnv": {
+        "OPENROUTER_API_KEY": "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"
+    },
+    "mounts": [
+        "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-docker",
+                "esbenp.prettier-vscode",
+                "openai.chatgpt",
+                "Google.gemini-cli-vscode-ide-companion"
+            ]
+        }
+    },
+    "forwardPorts": [
+        3000,
+        8000,
+        8501
+    ],
+    "portsAttributes": {
+        "3000": {
+            "label": "Web App (Next.js)",
+            "onAutoForward": "notify",
+            "host": "0.0.0.0"
+        }
+    },
+    "postCreateCommand": ""
+}
