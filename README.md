@@ -29,15 +29,26 @@ uv run python -m server
 
 ### 1. Start vLLM in Docker
 
+Following [Microsoft's official instructions](https://github.com/microsoft/VibeVoice/blob/main/docs/vibevoice-vllm-asr.md):
+
 ```bash
-docker run --gpus all -p 8000:8000 \
-  --name vibevoice-vllm \
+git clone https://github.com/microsoft/VibeVoice.git
+cd VibeVoice
+
+docker run -d --gpus all --name vibevoice-vllm \
+  --ipc=host \
   --restart unless-stopped \
+  -p 127.0.0.1:8000:8000 \
+  -e VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64 \
+  -e PYTORCH_ALLOC_CONF=expandable_segments:True \
+  -v $(pwd):/app \
+  -w /app \
+  --entrypoint bash \
   vllm/vllm-openai:v0.15.1 \
-  --model microsoft/VibeVoice-ASR-7B \
-  --tensor-parallel-size 1 \
-  --max-model-len 32768 \
-  --trust-remote-code
+  -c "python3 /app/vllm_plugin/scripts/start_server.py"
+
+# Watch startup progress (model download + tokenizer generation)
+docker logs -f vibevoice-vllm
 ```
 
 ### 2. Install the ASR server

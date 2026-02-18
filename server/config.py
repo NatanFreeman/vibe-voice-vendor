@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     max_audio_bytes: int = 500 * 1024 * 1024  # 500 MB
     max_queue_size: int = 50
     token_hashes_env: str = ""  # Comma-separated bcrypt hashes
-    vllm_model_name: str = "VibeVoice-ASR-7B"
-    vllm_max_tokens: int = 32768
+    vllm_model_name: str = "vibevoice"
+    vllm_max_tokens: int = 65536
     vllm_temperature: float = 0.0
     vllm_top_p: float = 1.0
 
