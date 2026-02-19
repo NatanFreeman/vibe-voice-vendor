@@ -12,7 +12,7 @@ Internet (HTTPS :42862) -> vvv_proxy (self-signed TLS) -> FastAPI (:54912 127.0.
 
 All steps run from `~/Desktop/vibe-voice-vendor` on the `rtx5090` machine as user `user`.
 
-### 1. Clone VibeVoice and start vLLM in Docker
+### 1. Clone VibeVoice and build the Docker image
 
 Following [Microsoft's official instructions](https://github.com/microsoft/VibeVoice/blob/main/docs/vibevoice-vllm-asr.md):
 
@@ -21,37 +21,40 @@ cd ~/Desktop/vibe-voice-vendor
 git clone https://github.com/microsoft/VibeVoice.git --recurse-submodules
 git -C VibeVoice checkout 1807b858
 
-docker run -d --gpus all --name vibevoice-vllm \
-  --ipc=host \
-  --restart unless-stopped \
-  -p 127.0.0.1:37845:8000 \
-  -e VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64 \
-  -e PYTORCH_ALLOC_CONF=expandable_segments:True \
-  -v ~/Desktop/vibe-voice-vendor/VibeVoice:/app \
-  -w /app \
-  --entrypoint bash \
-  vllm/vllm-openai:v0.14.1 \
-  -c '\
-    apt-get update && apt-get install -y ffmpeg libsndfile1 && \
-    pip install -e /app[vllm] && \
-    MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download(\"microsoft/VibeVoice-ASR\"))") && \
-    python3 -m vllm_plugin.tools.generate_tokenizer_files --output "$MODEL" && \
-    vllm serve "$MODEL" \
-      --served-model-name vibevoice \
-      --trust-remote-code \
-      --dtype bfloat16 \
-      --max-num-seqs 64 \
-      --max-model-len 48000 \
-      --gpu-memory-utilization 0.90 \
-      --no-enable-prefix-caching \
-      --enable-chunked-prefill \
-      --chat-template-content-format openai \
-      --tensor-parallel-size 1 \
-      --allowed-local-media-path /app \
-      --port 8000'
+# Build (one-time, downloads ~14 GB model weights)
+docker build -t vibevoice-vllm .
 
-# Watch startup progress (model download + tokenizer generation)
+# Run (instant start, no downloads)
+docker run -d --gpus all --name vibevoice-vllm \
+  --ipc=host --restart unless-stopped \
+  -p 127.0.0.1:37845:8000 \
+  vibevoice-vllm:latest
+
+# Watch startup progress
 docker logs -f vibevoice-vllm
+```
+
+The Dockerfile bakes all dependencies — system packages, model weights, pip packages, and generated tokenizer files — into the image at build time. The container starts immediately with no network access required.
+
+All vLLM flags are set in `CMD` and can be overridden at runtime:
+
+```bash
+docker run -d --gpus all --name vibevoice-vllm \
+  --ipc=host --restart unless-stopped \
+  -p 127.0.0.1:37845:8000 \
+  vibevoice-vllm:latest \
+  --served-model-name vibevoice \
+  --trust-remote-code \
+  --dtype bfloat16 \
+  --max-num-seqs 64 \
+  --max-model-len 65536 \
+  --gpu-memory-utilization 0.95 \
+  --no-enable-prefix-caching \
+  --enable-chunked-prefill \
+  --chat-template-content-format openai \
+  --tensor-parallel-size 1 \
+  --allowed-local-media-path /tmp \
+  --port 8000
 ```
 
 We override two flags from VibeVoice's `start_server.py`:
