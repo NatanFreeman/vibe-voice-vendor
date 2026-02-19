@@ -1,0 +1,13 @@
+# Include only VibeVoice/ — everything else is the wrapper server,
+# client, proxy, tests, etc. and is not needed in the vLLM image.
+*
+
+# Whitelist VibeVoice source needed for pip install
+!VibeVoice/
+
+# Exclude VibeVoice subdirectories not needed for pip install
+VibeVoice/.git/
+VibeVoice/demo/
+VibeVoice/docs/
+VibeVoice/Figures/
+VibeVoice/finetuning-asr/

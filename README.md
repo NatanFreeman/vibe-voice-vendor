@@ -8,115 +8,60 @@ Secure, queue-based ASR server wrapping Microsoft's [VibeVoice-ASR-7B](https://g
 Internet (HTTPS :42862) -> vvv_proxy (self-signed TLS) -> FastAPI (:54912 127.0.0.1) -> vLLM (:37845 127.0.0.1)
 ```
 
-## Quick Start (Development)
+## Setup
+
+Prerequisites: `docker` (with NVIDIA GPU support), `uv`, `cargo`, `git`, `curl`.
 
 ```bash
-# Install dependencies
-uv sync
-
-# Generate a token
-uv run python -m scripts.generate_token
-
-# Set environment variables
-export VVV_JWT_PUBLIC_KEY_FILE='keys/public.pem'
-export VVV_VLLM_BASE_URL='http://localhost:37845'
-
-# Start the server
-uv run python -m server
+./setup.sh
 ```
 
-## Deployment (Ubuntu 24.04 + RTX 5090)
+The script handles everything: cloning VibeVoice, building the Docker image (~14 GB model download on first build), installing Python dependencies, generating JWT keys, building the Rust TLS proxy, installing systemd services, and waiting for all health checks to pass.
 
-### 1. Start vLLM in Docker
+On subsequent runs it skips steps that are already done (existing image, existing keys, etc.). Use `--force-rebuild` to force a Docker image rebuild.
 
-Following [Microsoft's official instructions](https://github.com/microsoft/VibeVoice/blob/main/docs/vibevoice-vllm-asr.md):
+## vLLM Tuning
+
+All vLLM flags are set in the Dockerfile `CMD` and can be overridden at runtime:
 
 ```bash
-git clone https://github.com/microsoft/VibeVoice.git
-cd VibeVoice
-
 docker run -d --gpus all --name vibevoice-vllm \
-  --ipc=host \
-  --restart unless-stopped \
+  --ipc=host --restart unless-stopped \
   -p 127.0.0.1:37845:8000 \
-  -e VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64 \
-  -e PYTORCH_ALLOC_CONF=expandable_segments:True \
-  -v $(pwd):/app \
-  -w /app \
-  --entrypoint bash \
-  vllm/vllm-openai:v0.15.1 \
-  -c "python3 /app/vllm_plugin/scripts/start_server.py"
-
-# Watch startup progress (model download + tokenizer generation)
-docker logs -f vibevoice-vllm
+  vibevoice-vllm:latest \
+  --served-model-name vibevoice \
+  --trust-remote-code \
+  --dtype bfloat16 \
+  --max-num-seqs 64 \
+  --max-model-len 65536 \
+  --gpu-memory-utilization 0.95 \
+  --no-enable-prefix-caching \
+  --enable-chunked-prefill \
+  --chat-template-content-format openai \
+  --tensor-parallel-size 1 \
+  --allowed-local-media-path /tmp \
+  --port 8000
 ```
 
-### 2. Install the ASR server
+We override two flags from VibeVoice's `start_server.py`:
 
-```bash
-sudo mkdir -p /opt/vibe-voice-vendor
+- **`--gpu-memory-utilization 0.90`** (upstream default `0.8`): The model weights take 18.22 GiB. vLLM pre-allocates KV cache from whatever VRAM remains within the utilization budget, and anything outside the budget stays free for the audio encoder's forward pass (~700 MiB peak for long audio). At `0.98` the KV cache consumed nearly all remaining VRAM, causing OOM on files longer than ~1 minute. At `0.90` roughly 3 GiB stays free for the encoder.
 
-cd /opt/vibe-voice-vendor
-git clone <repo-url> .
-uv sync --no-dev
+- **`--max-model-len 48000`** (upstream default `65536`): With `0.90` utilization only ~2.6 GiB is available for KV cache, enough for ~48K tokens but not 65K. This is still sufficient for 60-minute audio: 60min × 60s × 24kHz / 3200 compression ratio = ~27K audio tokens, plus ~16K output tokens = ~43K total.
 
-# Generate key pair and token
-uv run python -m scripts.generate_token
-# Note the public key path for .env
+**Startup time (~85 seconds)**: The container makes zero network requests — everything is baked into the image. The time is spent on GPU initialization:
 
-cp deploy/env.example .env
-# Edit .env with your values (set VVV_JWT_PUBLIC_KEY_FILE)
-```
+| Phase | Duration |
+|-------|----------|
+| Load model weights (18.22 GiB from disk) | ~14s |
+| `torch.compile` | ~7s |
+| CUDA graph capture (decode, FULL) | ~63s |
 
-### 3. Build the TLS reverse proxy
+CUDA graph capture dominates: vLLM pre-records optimized GPU execution graphs for different batch sizes so it can replay them during inference instead of launching individual kernels. This is a one-time cost per container start, not per request. Disabling it (`--enforce-eager`) would make every inference request slower.
 
-No global installs required. The proxy generates self-signed certificates automatically on first run.
+**Known issue — repetition loop on long audio**: On a 7-minute test file (`sample/letter_factory_leap_frog.wav`), the model transcribed correctly up to ~4m20s then degenerated into an infinite repetition loop ("wop wop wop...") on a segment that likely contains music or sound effects. The loop continued until the 48K token limit was exhausted, inflating wall-clock time to 8m31s (most of it spent generating junk tokens). This is a known LLM degeneration pattern, not a server bug — the model lacks a built-in repetition penalty. Short speech-only files transcribe without issue.
 
-```bash
-cd /opt/vibe-voice-vendor/rust_proxy
-cargo build --release
-# Binary is at: target/release/vvv_proxy
-```
-
-### 4. Start the server via systemd
-
-```bash
-sudo cp deploy/vibevoice-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now vibevoice-server
-```
-
-### 5. Start the TLS proxy
-
-```bash
-cd /opt/vibe-voice-vendor/rust_proxy
-./target/release/vvv_proxy
-# Listens on https://0.0.0.0:42862, proxies to http://127.0.0.1:54912
-# Self-signed cert auto-generated at certs/self-signed/
-```
-
-## Client Installation
-
-The `vvv` CLI is included in the project. Install it on any client machine with [uv](https://docs.astral.sh/uv/):
-
-```bash
-# Clone the repo
-git clone <repo-url>
-cd vibe-voice-vendor
-
-# Install (creates the vvv command)
-uv sync --no-dev
-
-# Verify it works
-uv run vvv --help
-```
-
-If you want `vvv` available globally without the `uv run` prefix, install the package into an isolated tool environment:
-
-```bash
-uv tool install .
-vvv --help
-```
+Pinned versions: VibeVoice at `1807b858`, vLLM at `v0.14.1`. The VibeVoice plugin requires specific vLLM multimodal APIs (`PromptUpdateDetails`, `MultiModalKwargsItems`, `AudioMediaIO`) that only exist in `v0.11.1`–`v0.14.1`. The `VibeVoice/` directory is in `.gitignore`.
 
 ## Client Usage
 
@@ -124,17 +69,19 @@ vvv --help
 
 ```bash
 # Transcribe a file
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe sample/recording_with_hebrew.wav
 
 # With hotwords
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --hotwords "VibeVoice,ASR"
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe sample/recording_with_hebrew.wav --hotwords "VibeVoice,ASR"
 
 # Save to file
-vvv --server https://your-server:42862 --token YOUR_TOKEN transcribe recording.mp3 --output transcript.txt
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure transcribe sample/recording_with_hebrew.wav --output transcript.txt
 
 # Check queue status
-vvv --server https://your-server:42862 --token YOUR_TOKEN status
+vvv --server https://rtx5090:42862 --token YOUR_TOKEN --insecure status
 ```
+
+`--insecure` skips TLS verification for the self-signed certificate. Alternatively, use `--ca-cert certs/self-signed/fullchain.pem` to pin the cert.
 
 ### Python Library
 
@@ -145,11 +92,12 @@ from client.models import EventType
 
 async def main():
     client = VibevoiceClient(
-        base_url="https://your-server:42862",
+        base_url="https://rtx5090:42862",
         token="YOUR_TOKEN",
+        verify="certs/self-signed/fullchain.pem",
     )
 
-    async for event in client.transcribe("recording.mp3"):
+    async for event in client.transcribe("sample/recording_with_hebrew.wav"):
         if event.event_type == EventType.QUEUE:
             print(f"Queue position: {event.position}")
         elif event.event_type == EventType.DATA:
@@ -168,24 +116,60 @@ asyncio.run(main())
 | GET | `/v1/queue/status` | Yes | Get your queue position and job status |
 | GET | `/health` | No | Server + vLLM health check |
 
+### curl
+
+```bash
+# Health check (no auth required)
+curl -sk https://rtx5090:42862/health
+# {"status":"ok","vllm":"ok"}
+
+# Queue status
+curl -sk -H "Authorization: Bearer $TOKEN" https://rtx5090:42862/v1/queue/status
+# {"your_jobs":[],"total_queued":0}
+
+# Transcribe (streams SSE events)
+curl -sk -N -H "Authorization: Bearer $TOKEN" \
+  -F "audio=@sample/recording_with_hebrew.wav" \
+  https://rtx5090:42862/v1/transcribe
+
+# Transcribe with hotwords
+curl -sk -N -H "Authorization: Bearer $TOKEN" \
+  -F "audio=@sample/recording_with_hebrew.wav" \
+  -F "hotwords=VibeVoice,ASR" \
+  https://rtx5090:42862/v1/transcribe
+```
+
+`-s` silences progress, `-k` skips TLS verification for the self-signed certificate, `-N` disables output buffering for streaming.
+
 ## Configuration
 
-All configuration via environment variables with `VVV_` prefix. See `deploy/env.example` for the full list.
+All server arguments are required and passed via CLI flags. See `deploy/env.example` for the full reference.
 
 ## Token Management
 
 ```bash
 # Generate a key pair and token (first run creates keys/ directory)
-uv run python -m scripts.generate_token
+uv run python -m scripts.generate_token --keys-dir keys --subject user
 
-# Generate a token for a specific user
-uv run python -m scripts.generate_token --subject alice
+# Token is saved to keys/token.txt — copy it to your client machine
 
-# Point the server at the public key
-export VVV_JWT_PUBLIC_KEY_FILE=keys/public.pem
+# To revoke a token, decode its JTI and add it to the revocation file:
+python -c "import jwt; print(jwt.decode('TOKEN', options={'verify_signature': False})['jti'])"
+echo "JTI_VALUE" >> revoked_tokens.txt
+```
 
-# To revoke a token, decode its JTI and add it to a revocation file:
-# python -c "import jwt; print(jwt.decode('TOKEN', options={'verify_signature': False})['jti'])"
-# echo "JTI_VALUE" >> revoked.txt
-# export VVV_REVOKED_TOKENS_FILE=revoked.txt
+## Service Management
+
+```bash
+# View logs
+journalctl --user -u vibevoice-server -f
+journalctl --user -u vibevoice-proxy -f
+
+# Restart
+systemctl --user restart vibevoice-server
+systemctl --user restart vibevoice-proxy
+
+# Stop
+systemctl --user stop vibevoice-server
+systemctl --user stop vibevoice-proxy
 ```

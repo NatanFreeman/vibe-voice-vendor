@@ -1,34 +1,25 @@
 [Unit]
 Description=VibeVoice ASR Server
-After=network.target
+After=network-online.target default.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=user
-Group=user
-WorkingDirectory=/opt/vibe-voice-vendor
-ExecStart=/opt/vibe-voice-vendor/.venv/bin/python -m server \
+WorkingDirectory=%h/Desktop/vibe-voice-vendor
+ExecStart=%h/Desktop/vibe-voice-vendor/.venv/bin/python -m server \
     --vllm-base-url http://127.0.0.1:37845 \
     --host 127.0.0.1 \
     --port 54912 \
     --max-audio-bytes 524288000 \
     --max-queue-size 50 \
-    --jwt-public-key-file /opt/vibe-voice-vendor/keys/public.pem \
-    --revoked-tokens-file /opt/vibe-voice-vendor/revoked_tokens.txt \
+    --jwt-public-key-file %h/Desktop/vibe-voice-vendor/keys/public.pem \
+    --revoked-tokens-file %h/Desktop/vibe-voice-vendor/revoked_tokens.txt \
     --require-https true \
     --vllm-model-name vibevoice \
-    --vllm-max-tokens 65536 \
     --vllm-temperature 0.0 \
     --vllm-top-p 1.0
 Restart=on-failure
 RestartSec=5
 
-# Security hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/opt/vibe-voice-vendor
-
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

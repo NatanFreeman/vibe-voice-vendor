@@ -13,7 +13,6 @@ async def stream_transcription(
     audio_mime: str,
     audio_duration: float,
     hotwords: str | None,
-    max_tokens: int,
     temperature: float,
     top_p: float,
 ) -> AsyncIterator[str]:
@@ -45,7 +44,6 @@ async def stream_transcription(
             },
             {"role": "user", "content": content},
         ],
-        "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": top_p,
         "stream": True,

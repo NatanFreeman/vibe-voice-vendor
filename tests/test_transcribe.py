@@ -75,7 +75,6 @@ def _make_all_settings(tmp_path: Path, **overrides: object) -> Settings:
         "revoked_tokens_file": str(revoked_file),
         "require_https": False,
         "vllm_model_name": "vibevoice",
-        "vllm_max_tokens": 65536,
         "vllm_temperature": 0.0,
         "vllm_top_p": 1.0,
     }
@@ -107,8 +106,10 @@ async def _lifespan_client(
             await app.state.http_client.aclose()
 
 
-async def test_health_endpoint(settings: Settings) -> None:
-    async with _lifespan_client(settings) as client:
+async def test_health_endpoint(tmp_path: Path) -> None:
+    # Use an unreachable port so vLLM health check fails
+    s = _make_all_settings(tmp_path, vllm_base_url="http://127.0.0.1:1")
+    async with _lifespan_client(s) as client:
         resp = await client.get("/health")
         assert resp.status_code == 200
         data = resp.json()

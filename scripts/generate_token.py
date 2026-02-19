@@ -51,10 +51,13 @@ def main() -> None:
         algorithm="ES256",
     )
 
+    token_path = keys_dir / "token.txt"
+    token_path.write_text(token + "\n")
+
     print(f"Subject:     {args.subject}")
     print(f"Token:       {token}")
+    print(f"Saved to:    {token_path}")
     print(f"Public key:  {public_key_path}")
-    print(f"\nSet on server: --jwt-public-key-file {public_key_path}")
 
 
 if __name__ == "__main__":

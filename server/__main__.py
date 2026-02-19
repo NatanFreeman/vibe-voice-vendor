@@ -42,9 +42,6 @@ def main() -> None:
     )
     parser.add_argument("--vllm-model-name", required=True, help="Model name for vLLM")
     parser.add_argument(
-        "--vllm-max-tokens", type=int, required=True, help="Maximum output tokens"
-    )
-    parser.add_argument(
         "--vllm-temperature", type=float, required=True, help="Generation temperature"
     )
     parser.add_argument(
@@ -63,7 +60,6 @@ def main() -> None:
         revoked_tokens_file=args.revoked_tokens_file,
         require_https=args.require_https,
         vllm_model_name=args.vllm_model_name,
-        vllm_max_tokens=args.vllm_max_tokens,
         vllm_temperature=args.vllm_temperature,
         vllm_top_p=args.vllm_top_p,
     )

@@ -126,10 +126,10 @@ class TranscriptionQueue:
                 job.status = JobStatus.COMPLETED
             except Exception as exc:
                 job.status = JobStatus.FAILED
-                job.error_message = str(exc)
+                job.error_message = str(exc) or type(exc).__name__
                 # Signal error to waiting client
                 await job.chunk_queue.put(None)
-                logger.warning("Job %s failed: %s", job.job_id[:8], exc)
+                logger.warning("Job %s failed: %s", job.job_id[:8], job.error_message)
             finally:
                 elapsed = time.monotonic() - start_time
                 self._processing_times.append(elapsed)

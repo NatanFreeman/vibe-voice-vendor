@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import tempfile
 from pathlib import PurePosixPath
 
 _MIME_MAP = {
@@ -38,18 +39,25 @@ def detect_mime_type(filename: str) -> str:
 
 
 async def probe_duration(raw_bytes: bytes) -> float:
-    """Get audio duration in seconds via ffprobe without transcoding."""
-    process = await asyncio.create_subprocess_exec(
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_format",
-        "-i", "pipe:0",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate(input=raw_bytes)
+    """Get audio duration in seconds via ffprobe without transcoding.
+
+    Uses a temp file instead of stdin pipe because ffprobe cannot determine
+    duration for some formats (e.g. WAV) when reading from a pipe.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".audio") as tmp:
+        tmp.write(raw_bytes)
+        tmp.flush()
+
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            tmp.name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
 
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8", errors="replace")
