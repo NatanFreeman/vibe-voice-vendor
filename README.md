@@ -49,6 +49,16 @@ We override two flags from VibeVoice's `start_server.py`:
 
 - **`--max-model-len 48000`** (upstream default `65536`): With `0.90` utilization only ~2.6 GiB is available for KV cache, enough for ~48K tokens but not 65K. This is still sufficient for 60-minute audio: 60min × 60s × 24kHz / 3200 compression ratio = ~27K audio tokens, plus ~16K output tokens = ~43K total.
 
+**Startup time (~85 seconds)**: The container makes zero network requests — everything is baked into the image. The time is spent on GPU initialization:
+
+| Phase | Duration |
+|-------|----------|
+| Load model weights (18.22 GiB from disk) | ~14s |
+| `torch.compile` | ~7s |
+| CUDA graph capture (decode, FULL) | ~63s |
+
+CUDA graph capture dominates: vLLM pre-records optimized GPU execution graphs for different batch sizes so it can replay them during inference instead of launching individual kernels. This is a one-time cost per container start, not per request. Disabling it (`--enforce-eager`) would make every inference request slower.
+
 **Known issue — repetition loop on long audio**: On a 7-minute test file (`sample/letter_factory_leap_frog.wav`), the model transcribed correctly up to ~4m20s then degenerated into an infinite repetition loop ("wop wop wop...") on a segment that likely contains music or sound effects. The loop continued until the 48K token limit was exhausted, inflating wall-clock time to 8m31s (most of it spent generating junk tokens). This is a known LLM degeneration pattern, not a server bug — the model lacks a built-in repetition penalty. Short speech-only files transcribe without issue.
 
 Pinned versions: VibeVoice at `1807b858`, vLLM at `v0.14.1`. The VibeVoice plugin requires specific vLLM multimodal APIs (`PromptUpdateDetails`, `MultiModalKwargsItems`, `AudioMediaIO`) that only exist in `v0.11.1`–`v0.14.1`. The `VibeVoice/` directory is in `.gitignore`.
