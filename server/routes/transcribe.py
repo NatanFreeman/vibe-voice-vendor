@@ -78,7 +78,7 @@ async def transcribe(
             yield f"data: {chunk_event.model_dump_json()}\n\n"
 
         # Send final event
-        if job.error_message:
+        if job.error_message is not None:
             error_event = ErrorEvent(error=job.error_message)
             yield f"event: error\ndata: {error_event.model_dump_json()}\n\n"
         else:
