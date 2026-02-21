@@ -8,6 +8,8 @@ Secure, queue-based ASR server wrapping Microsoft's [VibeVoice-ASR-7B](https://g
 Internet (HTTPS :42862) -> vvv_proxy (self-signed TLS) -> FastAPI (:54912 127.0.0.1) -> vLLM (:37845 127.0.0.1)
 ```
 
+Streaming is true end-to-end, token-by-token — no buffering at any layer. vLLM emits SSE deltas → `httpx.stream()` / `aiter_lines()` yields each line as it arrives → `vllm_client` parses and yields each token → worker puts it into an unbounded `asyncio.Queue` → route handler's async generator pulls and yields SSE events → FastAPI `StreamingResponse` (with `X-Accel-Buffering: no`) sends each chunk to the client immediately. No code anywhere accumulates the full response before sending.
+
 ## Setup
 
 Prerequisites: `docker` (with NVIDIA GPU support), `uv`, `cargo`, `git`, `curl`.
@@ -62,6 +64,8 @@ CUDA graph capture dominates: vLLM pre-records optimized GPU execution graphs fo
 **Known issue — repetition loop on long audio**: On a 7-minute test file (`sample/letter_factory_leap_frog.wav`), the model transcribed correctly up to ~4m20s then degenerated into an infinite repetition loop ("wop wop wop...") on a segment that likely contains music or sound effects. The loop continued until the 48K token limit was exhausted, inflating wall-clock time to 8m31s (most of it spent generating junk tokens). This is a known LLM degeneration pattern, not a server bug — the model lacks a built-in repetition penalty. Short speech-only files transcribe without issue.
 
 Pinned versions: VibeVoice at `1807b858`, vLLM at `v0.14.1`. The VibeVoice plugin requires specific vLLM multimodal APIs (`PromptUpdateDetails`, `MultiModalKwargsItems`, `AudioMediaIO`) that only exist in `v0.11.1`–`v0.14.1`. The `VibeVoice/` directory is in `.gitignore`.
+
+See [doc/vibevoice-asr-quality-investigation.md](doc/vibevoice-asr-quality-investigation.md) for a deep-dive into every inference parameter, dtype, prompt template, and audio preprocessing step — verifying correctness against the official Microsoft reference code.
 
 ## Client Usage
 
