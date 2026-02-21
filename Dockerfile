@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir /build/VibeVoice && \
     rm -rf /build
 
 ENV VIBEVOICE_FFMPEG_MAX_CONCURRENCY=64
+ENV VIBEVOICE_USE_MEAN=1
 ENV PYTORCH_ALLOC_CONF=expandable_segments:True
 
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server", \
