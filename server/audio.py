@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import tempfile
 from pathlib import PurePosixPath
 
@@ -36,6 +37,39 @@ def detect_mime_type(filename: str) -> str:
             f"Supported extensions: {', '.join(sorted(_MIME_MAP.keys()))}"
         )
     return _MIME_MAP[suffix]
+
+
+async def compress_to_opus(raw_bytes: bytes) -> bytes:
+    """Compress audio to OGG/Opus via ffmpeg. Keeps file size small for cloud APIs."""
+    with tempfile.NamedTemporaryFile(suffix=".audio") as src:
+        src.write(raw_bytes)
+        src.flush()
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as dst:
+            dst_path = dst.name
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-i", src.name,
+                "-vn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-c:a", "libopus",
+                "-b:a", "64k",
+                dst_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr_data = await process.communicate()
+            if process.returncode != 0:
+                err = stderr_data.decode("utf-8", errors="replace")
+                raise RuntimeError(f"ffmpeg opus compression failed: {err}")
+
+            with open(dst_path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(dst_path)
 
 
 async def probe_duration(raw_bytes: bytes) -> float:

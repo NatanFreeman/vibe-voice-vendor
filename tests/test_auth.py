@@ -28,6 +28,7 @@ def _make_settings(tmp_path: object, public_pem: bytes, revoked_tokens_file: str
     key_file = Path(str(tmp_path)) / "public.pem"
     key_file.write_bytes(public_pem)
     return Settings(
+        asr_backend="vibevoice",
         vllm_base_url="http://127.0.0.1:9999",
         server_host="127.0.0.1",
         server_port=54912,
@@ -39,6 +40,8 @@ def _make_settings(tmp_path: object, public_pem: bytes, revoked_tokens_file: str
         vllm_model_name="vibevoice",
         vllm_temperature=0.0,
         vllm_top_p=1.0,
+        groq_api_key="",
+        groq_model_name="whisper-large-v3",
     )
 
 
@@ -76,6 +79,7 @@ def test_no_public_key_configured(tmp_path: object) -> None:
     revoked_file = Path(str(tmp_path)) / "revoked.txt"
     revoked_file.write_text("")
     settings = Settings(
+        asr_backend="vibevoice",
         vllm_base_url="http://127.0.0.1:9999",
         server_host="127.0.0.1",
         server_port=54912,
@@ -87,6 +91,8 @@ def test_no_public_key_configured(tmp_path: object) -> None:
         vllm_model_name="vibevoice",
         vllm_temperature=0.0,
         vllm_top_p=1.0,
+        groq_api_key="",
+        groq_model_name="whisper-large-v3",
     )
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="any")
     with pytest.raises(HTTPException) as exc_info:
