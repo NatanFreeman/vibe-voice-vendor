@@ -33,6 +33,7 @@ def settings(tmp_path: Path) -> Settings:
     revoked_file = tmp_path / "revoked.txt"
     revoked_file.write_text("")
     return Settings(
+        asr_backend="vibevoice",
         vllm_base_url="http://127.0.0.1:9999",
         server_host="127.0.0.1",
         server_port=54912,
@@ -44,6 +45,8 @@ def settings(tmp_path: Path) -> Settings:
         vllm_model_name="vibevoice",
         vllm_temperature=0.0,
         vllm_top_p=1.0,
+        groq_api_key="",
+        groq_model_name="whisper-large-v3",
     )
 
 

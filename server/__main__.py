@@ -19,7 +19,12 @@ def main() -> None:
         prog="vvv-server",
         description="VibeVoice ASR Server",
     )
-    parser.add_argument("--vllm-base-url", required=True, help="vLLM server base URL")
+    parser.add_argument(
+        "--asr-backend",
+        choices=["vibevoice", "groq"],
+        default="vibevoice",
+        help="ASR backend: local vLLM VibeVoice or Groq Whisper cloud API (default: vibevoice)",
+    )
     parser.add_argument("--host", required=True, help="Server bind address")
     parser.add_argument("--port", type=int, required=True, help="Server bind port")
     parser.add_argument(
@@ -40,18 +45,30 @@ def main() -> None:
         required=True,
         help="Reject non-HTTPS requests (true/false)",
     )
-    parser.add_argument("--vllm-model-name", required=True, help="Model name for vLLM")
+    # vLLM / VibeVoice options (required when --asr-backend vibevoice)
+    parser.add_argument("--vllm-base-url", default="", help="vLLM server base URL")
+    parser.add_argument("--vllm-model-name", default="vibevoice", help="Model name for vLLM")
     parser.add_argument(
-        "--vllm-temperature", type=float, required=True, help="Generation temperature"
+        "--vllm-temperature", type=float, default=0.0, help="Generation temperature"
     )
     parser.add_argument(
-        "--vllm-top-p", type=float, required=True, help="Top-P sampling parameter"
+        "--vllm-top-p", type=float, default=1.0, help="Top-P sampling parameter"
+    )
+    # Groq Whisper options (required when --asr-backend groq)
+    parser.add_argument("--groq-api-key", default="", help="Groq API key")
+    parser.add_argument(
+        "--groq-model-name", default="whisper-large-v3", help="Groq Whisper model name"
     )
 
     args = parser.parse_args()
 
+    if args.asr_backend == "vibevoice" and not args.vllm_base_url:
+        parser.error("--vllm-base-url is required when --asr-backend is vibevoice")
+    if args.asr_backend == "groq" and not args.groq_api_key:
+        parser.error("--groq-api-key is required when --asr-backend is groq")
+
     settings = Settings(
-        vllm_base_url=args.vllm_base_url,
+        asr_backend=args.asr_backend,
         server_host=args.host,
         server_port=args.port,
         max_audio_bytes=args.max_audio_bytes,
@@ -59,9 +76,12 @@ def main() -> None:
         jwt_public_key_file=args.jwt_public_key_file,
         revoked_tokens_file=args.revoked_tokens_file,
         require_https=args.require_https,
+        vllm_base_url=args.vllm_base_url,
         vllm_model_name=args.vllm_model_name,
         vllm_temperature=args.vllm_temperature,
         vllm_top_p=args.vllm_top_p,
+        groq_api_key=args.groq_api_key,
+        groq_model_name=args.groq_model_name,
     )
 
     app = create_app(settings)

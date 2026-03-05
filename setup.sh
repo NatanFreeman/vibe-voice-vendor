@@ -3,12 +3,41 @@ set -euo pipefail
 
 # Parse flags
 FORCE_REBUILD=false
-for arg in "$@"; do
-    case "$arg" in
-        --force-rebuild) FORCE_REBUILD=true ;;
-        *) echo "Unknown flag: $arg"; echo "Usage: ./setup.sh [--force-rebuild]"; exit 1 ;;
+BACKEND="vibevoice"
+GROQ_API_KEY=""
+GROQ_MODEL_NAME="whisper-large-v3"
+
+print_usage() {
+    echo "Usage: ./setup.sh [--force-rebuild] [--backend vibevoice|groq] [--groq-api-key KEY] [--groq-model-name MODEL]"
+    echo ""
+    echo "Backends:"
+    echo "  vibevoice  Local vLLM + VibeVoice-ASR-7B on GPU (default)"
+    echo "  groq       Groq cloud API running Whisper large-v3 (no GPU needed)"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force-rebuild) FORCE_REBUILD=true; shift ;;
+        --backend)
+            BACKEND="$2"
+            if [[ "$BACKEND" != "vibevoice" && "$BACKEND" != "groq" ]]; then
+                echo "ERROR: --backend must be 'vibevoice' or 'groq', got '$BACKEND'"
+                exit 1
+            fi
+            shift 2 ;;
+        --groq-api-key) GROQ_API_KEY="$2"; shift 2 ;;
+        --groq-model-name) GROQ_MODEL_NAME="$2"; shift 2 ;;
+        --help|-h) print_usage; exit 0 ;;
+        *) echo "Unknown flag: $1"; print_usage; exit 1 ;;
     esac
 done
+
+if [[ "$BACKEND" == "groq" && -z "$GROQ_API_KEY" ]]; then
+    echo "ERROR: --groq-api-key is required when --backend is groq"
+    exit 1
+fi
+
+echo "ASR backend: $BACKEND"
 
 # Step 1: Validate environment
 if [[ ! -f Dockerfile ]]; then
@@ -20,7 +49,13 @@ if [[ ! -f Dockerfile ]]; then
 fi
 
 # Step 2: Check prerequisites
-for cmd in docker uv cargo git curl; do
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    REQUIRED_CMDS=(docker uv cargo git curl)
+else
+    REQUIRED_CMDS=(uv cargo git curl)
+fi
+
+for cmd in "${REQUIRED_CMDS[@]}"; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "ERROR: '$cmd' not found in PATH"
         echo "  PATH=$PATH"
@@ -34,34 +69,38 @@ for cmd in docker uv cargo git curl; do
     fi
 done
 
-if ! docker info 2>/dev/null | grep -qi nvidia; then
-    echo "ERROR: Docker does not appear to have NVIDIA GPU support"
-    echo "  'docker info' output (GPU-related):"
-    docker info 2>&1 | grep -i -E 'runtime|nvidia|gpu' || echo "  (none found)"
-    echo "  Install nvidia-container-toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
-    exit 1
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    if ! docker info 2>/dev/null | grep -qi nvidia; then
+        echo "ERROR: Docker does not appear to have NVIDIA GPU support"
+        echo "  'docker info' output (GPU-related):"
+        docker info 2>&1 | grep -i -E 'runtime|nvidia|gpu' || echo "  (none found)"
+        echo "  Install nvidia-container-toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+        exit 1
+    fi
 fi
 
-# Step 3: Clone VibeVoice if missing
-if [[ ! -d VibeVoice ]]; then
-    echo "Cloning VibeVoice..."
-    git clone https://github.com/microsoft/VibeVoice.git --recurse-submodules
-    git -C VibeVoice checkout 1807b858
-elif [[ ! -f VibeVoice/pyproject.toml ]]; then
-    echo "ERROR: VibeVoice/ directory exists but looks incomplete (no pyproject.toml)"
-    echo "  Contents: $(ls VibeVoice/)"
-    echo "  Delete it and re-run: rm -rf VibeVoice && ./setup.sh"
-    exit 1
-else
-    echo "VibeVoice/ already exists, skipping clone"
-fi
+# Step 3: Clone VibeVoice if missing (vibevoice backend only)
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    if [[ ! -d VibeVoice ]]; then
+        echo "Cloning VibeVoice..."
+        git clone https://github.com/microsoft/VibeVoice.git --recurse-submodules
+        git -C VibeVoice checkout 1807b858
+    elif [[ ! -f VibeVoice/pyproject.toml ]]; then
+        echo "ERROR: VibeVoice/ directory exists but looks incomplete (no pyproject.toml)"
+        echo "  Contents: $(ls VibeVoice/)"
+        echo "  Delete it and re-run: rm -rf VibeVoice && ./setup.sh"
+        exit 1
+    else
+        echo "VibeVoice/ already exists, skipping clone"
+    fi
 
-EXPECTED_COMMIT="1807b858"
-ACTUAL_COMMIT=$(git -C VibeVoice rev-parse --short HEAD)
-if [[ "$EXPECTED_COMMIT" != "$ACTUAL_COMMIT"* ]]; then
-    echo "ERROR: VibeVoice is at commit $ACTUAL_COMMIT, expected $EXPECTED_COMMIT"
-    echo "  Fix: git -C VibeVoice checkout $EXPECTED_COMMIT"
-    exit 1
+    EXPECTED_COMMIT="1807b858"
+    ACTUAL_COMMIT=$(git -C VibeVoice rev-parse --short HEAD)
+    if [[ "$EXPECTED_COMMIT" != "$ACTUAL_COMMIT"* ]]; then
+        echo "ERROR: VibeVoice is at commit $ACTUAL_COMMIT, expected $EXPECTED_COMMIT"
+        echo "  Fix: git -C VibeVoice checkout $EXPECTED_COMMIT"
+        exit 1
+    fi
 fi
 
 # Step 4: Stop existing services (if running)
@@ -69,40 +108,42 @@ echo "Stopping existing services..."
 systemctl --user stop vibevoice-proxy 2>/dev/null || true
 systemctl --user stop vibevoice-server 2>/dev/null || true
 
-# Step 5: Stop and remove existing Docker container
-if docker container inspect vibevoice-vllm &>/dev/null; then
+# Step 5: Stop and remove existing Docker container (if present)
+if docker container inspect vibevoice-vllm &>/dev/null 2>&1; then
     echo "Removing existing vibevoice-vllm container..."
     docker stop vibevoice-vllm
     docker rm vibevoice-vllm
 fi
 
-# Step 6: Build Docker image if needed
-if $FORCE_REBUILD || ! docker image inspect vibevoice-vllm &>/dev/null; then
-    echo "Building vibevoice-vllm Docker image (downloads ~14 GB model on first build)..."
-    docker build -t vibevoice-vllm .
-    if ! docker image inspect vibevoice-vllm &>/dev/null; then
-        echo "ERROR: docker build appeared to succeed but image 'vibevoice-vllm' not found"
-        echo "  Docker images: $(docker images --format '{{.Repository}}:{{.Tag}}' | head -10)"
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    # Step 6: Build Docker image if needed
+    if $FORCE_REBUILD || ! docker image inspect vibevoice-vllm &>/dev/null; then
+        echo "Building vibevoice-vllm Docker image (downloads ~14 GB model on first build)..."
+        docker build -t vibevoice-vllm .
+        if ! docker image inspect vibevoice-vllm &>/dev/null; then
+            echo "ERROR: docker build appeared to succeed but image 'vibevoice-vllm' not found"
+            echo "  Docker images: $(docker images --format '{{.Repository}}:{{.Tag}}' | head -10)"
+            exit 1
+        fi
+    else
+        echo "Docker image vibevoice-vllm already exists, skipping build (use --force-rebuild to override)"
+    fi
+
+    # Step 7: Start Docker container
+    echo "Starting vibevoice-vllm container..."
+    docker run -d --gpus all --name vibevoice-vllm \
+        --ipc=host --restart unless-stopped \
+        -p 127.0.0.1:37845:8000 \
+        vibevoice-vllm:latest
+
+    sleep 2
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' vibevoice-vllm 2>/dev/null || echo "not found")
+    if [[ "$CONTAINER_STATUS" != "running" ]]; then
+        echo "ERROR: Container vibevoice-vllm is not running (status: $CONTAINER_STATUS)"
+        echo "  Last 20 lines of logs:"
+        docker logs --tail 20 vibevoice-vllm 2>&1 || true
         exit 1
     fi
-else
-    echo "Docker image vibevoice-vllm already exists, skipping build (use --force-rebuild to override)"
-fi
-
-# Step 7: Start Docker container
-echo "Starting vibevoice-vllm container..."
-docker run -d --gpus all --name vibevoice-vllm \
-    --ipc=host --restart unless-stopped \
-    -p 127.0.0.1:37845:8000 \
-    vibevoice-vllm:latest
-
-sleep 2
-CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' vibevoice-vllm 2>/dev/null || echo "not found")
-if [[ "$CONTAINER_STATUS" != "running" ]]; then
-    echo "ERROR: Container vibevoice-vllm is not running (status: $CONTAINER_STATUS)"
-    echo "  Last 20 lines of logs:"
-    docker logs --tail 20 vibevoice-vllm 2>&1 || true
-    exit 1
 fi
 
 # Step 8: Install Python dependencies
@@ -133,7 +174,39 @@ fi
 # Step 11: Install and start systemd services
 echo "Installing systemd services..."
 mkdir -p ~/.config/systemd/user
-cp deploy/vibevoice-server.service ~/.config/systemd/user/
+
+if [[ "$BACKEND" == "groq" ]]; then
+    # Generate Groq-mode service file
+    cat > ~/.config/systemd/user/vibevoice-server.service <<SERVICEEOF
+[Unit]
+Description=VibeVoice ASR Server (Groq Whisper backend)
+After=network-online.target default.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/vibe-voice-vendor
+ExecStart=%h/Desktop/vibe-voice-vendor/.venv/bin/python -m server \\
+    --asr-backend groq \\
+    --groq-api-key ${GROQ_API_KEY} \\
+    --groq-model-name ${GROQ_MODEL_NAME} \\
+    --host 127.0.0.1 \\
+    --port 54912 \\
+    --max-audio-bytes 524288000 \\
+    --max-queue-size 50 \\
+    --jwt-public-key-file %h/Desktop/vibe-voice-vendor/keys/public.pem \\
+    --revoked-tokens-file %h/Desktop/vibe-voice-vendor/revoked_tokens.txt \\
+    --require-https true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+SERVICEEOF
+else
+    cp deploy/vibevoice-server.service ~/.config/systemd/user/
+fi
+
 cp deploy/vibevoice-proxy.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now vibevoice-server
@@ -151,29 +224,33 @@ for svc in vibevoice-server vibevoice-proxy; do
 done
 
 # Step 12: Wait for health
-echo "Waiting for vLLM to become healthy (this takes ~90 seconds)..."
-TRIES=0
-MAX_TRIES=36  # 36 * 5s = 3 minutes
-while (( TRIES < MAX_TRIES )); do
-    if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:37845/health 2>/dev/null | grep -q 200; then
-        break
-    fi
-    (( ++TRIES ))
-    sleep 5
-done
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    echo "Waiting for vLLM to become healthy (this takes ~90 seconds)..."
+    TRIES=0
+    MAX_TRIES=36  # 36 * 5s = 3 minutes
+    while (( TRIES < MAX_TRIES )); do
+        if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:37845/health 2>/dev/null | grep -q 200; then
+            break
+        fi
+        (( ++TRIES ))
+        sleep 5
+    done
 
-if (( TRIES == MAX_TRIES )); then
-    echo "ERROR: vLLM did not become healthy within 3 minutes"
-    echo "  Container status: $(docker inspect -f '{{.State.Status}}' vibevoice-vllm 2>/dev/null || echo 'not found')"
-    echo "  Last 30 lines of container logs:"
-    docker logs --tail 30 vibevoice-vllm 2>&1 || true
-    exit 1
+    if (( TRIES == MAX_TRIES )); then
+        echo "ERROR: vLLM did not become healthy within 3 minutes"
+        echo "  Container status: $(docker inspect -f '{{.State.Status}}' vibevoice-vllm 2>/dev/null || echo 'not found')"
+        echo "  Last 30 lines of container logs:"
+        docker logs --tail 30 vibevoice-vllm 2>&1 || true
+        exit 1
+    fi
 fi
 
 HEALTH=$(curl -sk https://127.0.0.1:42862/health 2>/dev/null || echo "FAILED")
 if [[ "$HEALTH" != *'"status":"ok"'* ]]; then
     echo "ERROR: Full stack health check failed"
-    echo "  vLLM direct:  $(curl -s http://127.0.0.1:37845/health 2>/dev/null || echo 'FAILED')"
+    if [[ "$BACKEND" == "vibevoice" ]]; then
+        echo "  vLLM direct:  $(curl -s http://127.0.0.1:37845/health 2>/dev/null || echo 'FAILED')"
+    fi
     echo "  Server direct: $(curl -s http://127.0.0.1:54912/health 2>/dev/null || echo 'FAILED')"
     echo "  Proxy (full):  $HEALTH"
     echo "  vibevoice-server status: $(systemctl --user is-active vibevoice-server 2>/dev/null)"
@@ -183,7 +260,10 @@ fi
 
 echo ""
 echo "Setup complete. All services healthy."
-echo "  vLLM:   http://127.0.0.1:37845"
+echo "  Backend: $BACKEND"
+if [[ "$BACKEND" == "vibevoice" ]]; then
+    echo "  vLLM:   http://127.0.0.1:37845"
+fi
 echo "  Server: http://127.0.0.1:54912"
 echo "  Proxy:  https://127.0.0.1:42862"
 if [[ -f keys/token.txt ]]; then

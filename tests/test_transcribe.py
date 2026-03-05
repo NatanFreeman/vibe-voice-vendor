@@ -66,6 +66,7 @@ def _make_all_settings(tmp_path: Path, **overrides: object) -> Settings:
     revoked_file = tmp_path / "revoked.txt"
     revoked_file.write_text("")
     values: dict[str, object] = {
+        "asr_backend": "vibevoice",
         "vllm_base_url": "http://127.0.0.1:37845",
         "server_host": "127.0.0.1",
         "server_port": 54912,
@@ -77,6 +78,8 @@ def _make_all_settings(tmp_path: Path, **overrides: object) -> Settings:
         "vllm_model_name": "vibevoice",
         "vllm_temperature": 0.0,
         "vllm_top_p": 1.0,
+        "groq_api_key": "",
+        "groq_model_name": "whisper-large-v3",
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]

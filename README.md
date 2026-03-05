@@ -22,6 +22,14 @@ The script handles everything: cloning VibeVoice, building the Docker image (~14
 
 On subsequent runs it skips steps that are already done (existing image, existing keys, etc.). Use `--force-rebuild` to force a Docker image rebuild.
 
+If you don't have 32 GiB of VRAM free, you can use OpenAI Whisper large-v3 served via [Groq](https://console.groq.com) instead — no GPU needed:
+
+```bash
+./setup.sh --backend groq --groq-api-key gsk_YOUR_KEY_HERE
+```
+
+This is useful for [voice typing](https://github.com/BigBIueWhale/heliboard-microsoft-vibevoice-asr) without sacrificing a GPU to be idle (with VRAM full) 99.9% of the time. No known cloud inference provider supports VibeVoice-ASR as of today — if you're a provider interested in hosting it, see [this discussion](https://huggingface.co/microsoft/VibeVoice-ASR/discussions/21).
+
 ## vLLM Tuning
 
 All vLLM flags are set in the Dockerfile `CMD` and can be overridden at runtime:

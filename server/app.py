@@ -11,7 +11,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from server.config import Settings
 from server.queue import TranscriptionQueue
 from server.routes import health, queue_status, transcribe
-from server.transcribe import process_transcription_job
+from server.transcribe import process_groq_job, process_vibevoice_job
 
 
 class RequireHTTPSMiddleware:
@@ -51,9 +51,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.http_client = http_client
 
     queue = TranscriptionQueue(max_size=config.max_queue_size)
-    queue.set_process_fn(
-        partial(process_transcription_job, http_client=http_client, config=config)
-    )
+    if config.asr_backend == "groq":
+        process_fn = partial(process_groq_job, http_client=http_client, config=config)
+    else:
+        process_fn = partial(process_vibevoice_job, http_client=http_client, config=config)
+    queue.set_process_fn(process_fn)
     queue.start_worker()
     app.state.queue = queue
 
