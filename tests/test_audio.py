@@ -1,17 +1,65 @@
+import asyncio
 import base64
-import shutil
 import struct
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
-from server.audio import detect_mime_type, encode_audio_base64, probe_duration
+from server.audio import (
+    HELIBOARD_WAV_MIME_TYPE,
+    compress_file_to_opus,
+    encode_audio_base64,
+    read_heliboard_wav_info,
+    validate_heliboard_wav_metadata,
+)
 
-has_ffprobe = shutil.which("ffprobe") is not None
+WavMutator = Callable[[bytes], bytes]
 
 
-def _make_wav(
-    sample_rate: int = 16000, num_samples: int = 16000, num_channels: int = 1
-) -> bytes:
+class _FakeProcess:
+    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+
+class _HangingProcess:
+    def __init__(self) -> None:
+        self.killed = False
+        self.returncode: int | None = None
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        if self.killed:
+            return b"", b""
+        await asyncio.sleep(3600)
+        return b"", b""
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+
+class _CancelledProcess:
+    def __init__(self) -> None:
+        self.killed = False
+        self.returncode: int | None = None
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        if self.killed:
+            return b"", b""
+        raise asyncio.CancelledError
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+
+def _make_wav(sample_rate: int = 16000, num_samples: int = 16000, num_channels: int = 1) -> bytes:
     """Create a minimal valid WAV file."""
     bits_per_sample = 16
     byte_rate = sample_rate * num_channels * bits_per_sample // 8
@@ -45,51 +93,159 @@ def test_encode_audio_base64_roundtrip() -> None:
     assert base64.b64decode(encoded) == raw
 
 
-def test_detect_mime_type_wav() -> None:
-    assert detect_mime_type("recording.wav") == "audio/wav"
+def test_validate_heliboard_wav_metadata_accepts_exact_contract() -> None:
+    assert (
+        validate_heliboard_wav_metadata("recording_20260710_121314_123.wav", "audio/wav")
+        == HELIBOARD_WAV_MIME_TYPE
+    )
 
 
-def test_detect_mime_type_mp3() -> None:
-    assert detect_mime_type("song.mp3") == "audio/mpeg"
+@pytest.mark.parametrize(
+    ("filename", "content_type", "message"),
+    [
+        (None, "audio/wav", "filename"),
+        ("", "audio/wav", "filename"),
+        ("recording.WAV", "audio/wav", r"\.wav"),
+        ("recording.mp3", "audio/mpeg", r"\.wav"),
+        ("recording.wav", None, "Content-Type"),
+        ("recording.wav", "application/octet-stream", "audio/wav"),
+        ("recording.wav", "audio/x-wav", "audio/wav"),
+    ],
+)
+def test_validate_heliboard_wav_metadata_rejects_non_contract_values(
+    filename: str | None,
+    content_type: str | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        validate_heliboard_wav_metadata(filename, content_type)
 
 
-def test_detect_mime_type_flac() -> None:
-    assert detect_mime_type("track.flac") == "audio/flac"
+def test_read_heliboard_wav_info_accepts_exact_16khz_mono_pcm(tmp_path: Path) -> None:
+    path = tmp_path / "recording.wav"
+    path.write_bytes(_make_wav(sample_rate=16000, num_samples=16000))
+
+    info = read_heliboard_wav_info(str(path))
+
+    assert info.duration_seconds == 1.0
+    assert info.data_size == 32000
 
 
-def test_detect_mime_type_ogg() -> None:
-    assert detect_mime_type("voice.ogg") == "audio/ogg"
+@pytest.mark.parametrize(
+    ("mutator", "message"),
+    [
+        (lambda b: b[:0] + b"NOPE" + b[4:], "RIFF"),
+        (lambda b: b[:8] + b"NOPE" + b[12:], "WAVE"),
+        (lambda b: b[:12] + b"JUNK" + b[16:], "fmt"),
+        (lambda b: b[:36] + b"JUNK" + b[40:], "data"),
+        (lambda b: b[:20] + struct.pack("<H", 3) + b[22:], "PCM"),
+        (lambda b: b[:22] + struct.pack("<H", 2) + b[24:], "mono"),
+        (lambda b: b[:24] + struct.pack("<I", 8000) + b[28:], "16000"),
+        (lambda b: b[:28] + struct.pack("<I", 16000) + b[32:], "32000"),
+        (lambda b: b[:32] + struct.pack("<H", 4) + b[34:], "block align"),
+        (lambda b: b[:34] + struct.pack("<H", 24) + b[36:], "16"),
+        (lambda b: b[:40] + struct.pack("<I", 0) + b[44:], "data size"),
+        (lambda b: b[:43], "too short"),
+        (lambda b: b + b"\x00", "RIFF size"),
+    ],
+)
+def test_read_heliboard_wav_info_rejects_non_canonical_wav(
+    tmp_path: Path,
+    mutator: WavMutator,
+    message: str,
+) -> None:
+    path = tmp_path / "recording.wav"
+    path.write_bytes(mutator(_make_wav(sample_rate=16000, num_samples=16000)))
+
+    with pytest.raises(ValueError, match=message):
+        read_heliboard_wav_info(str(path))
 
 
-def test_detect_mime_type_opus() -> None:
-    assert detect_mime_type("voice.opus") == "audio/ogg"
+def test_read_heliboard_wav_info_rejects_extra_chunks(tmp_path: Path) -> None:
+    wav = _make_wav(sample_rate=16000, num_samples=16000)
+    inserted_chunk = b"LIST\x04\x00\x00\x00abcd"
+    file_size = len(wav) + len(inserted_chunk)
+    with_list_chunk = (
+        wav[:4] + struct.pack("<I", file_size - 8) + wav[8:36] + inserted_chunk + wav[36:]
+    )
+    path = tmp_path / "recording.wav"
+    path.write_bytes(with_list_chunk)
+
+    with pytest.raises(ValueError, match="data chunk"):
+        read_heliboard_wav_info(str(path))
 
 
-def test_detect_mime_type_unknown_raises() -> None:
-    with pytest.raises(ValueError, match="Unrecognized audio extension"):
-        detect_mime_type("data.xyz")
+def test_read_heliboard_wav_info_rejects_empty_data_chunk(tmp_path: Path) -> None:
+    path = tmp_path / "recording.wav"
+    path.write_bytes(_make_wav(sample_rate=16000, num_samples=0))
+
+    with pytest.raises(ValueError, match="empty"):
+        read_heliboard_wav_info(str(path))
 
 
-def test_detect_mime_type_case_insensitive() -> None:
-    assert detect_mime_type("FILE.WAV") == "audio/wav"
-    assert detect_mime_type("track.MP3") == "audio/mpeg"
+async def test_compress_uses_bounded_local_ffmpeg_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured_args: list[str] = []
+    src = tmp_path / "audio.wav"
+    src.write_bytes(b"fake audio")
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        captured_args[:] = [str(arg) for arg in args]
+        return _FakeProcess(b"")
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+
+    await compress_file_to_opus(str(src))
+
+    assert captured_args[:9] == [
+        "ffmpeg",
+        "-y",
+        "-nostdin",
+        "-threads",
+        "1",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-i",
+        str(src),
+    ]
 
 
-@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
-async def test_probe_duration_wav() -> None:
-    wav_bytes = _make_wav(sample_rate=16000, num_samples=16000)
-    duration = await probe_duration(wav_bytes)
-    assert abs(duration - 1.0) < 0.1
+async def test_compress_timeout_kills_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _HangingProcess()
+    src = tmp_path / "audio.wav"
+    src.write_bytes(b"fake audio")
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> _HangingProcess:
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("server.audio._FFMPEG_TIMEOUT_SECONDS", 0.001)
+
+    with pytest.raises(RuntimeError, match="ffmpeg opus compression timed out"):
+        await compress_file_to_opus(str(src))
+
+    assert process.killed
 
 
-@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
-async def test_probe_duration_half_second() -> None:
-    wav_bytes = _make_wav(sample_rate=16000, num_samples=8000)
-    duration = await probe_duration(wav_bytes)
-    assert abs(duration - 0.5) < 0.1
+async def test_compress_cancellation_kills_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _CancelledProcess()
+    src = tmp_path / "audio.wav"
+    src.write_bytes(b"fake audio")
 
+    async def fake_exec(*args: Any, **kwargs: Any) -> _CancelledProcess:
+        return process
 
-@pytest.mark.skipif(not has_ffprobe, reason="ffprobe not installed")
-async def test_probe_duration_invalid() -> None:
-    with pytest.raises(RuntimeError, match="ffprobe failed"):
-        await probe_duration(b"not audio data at all")
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+
+    with pytest.raises(asyncio.CancelledError):
+        await compress_file_to_opus(str(src))
+
+    assert process.killed

@@ -19,7 +19,7 @@ After exhaustive investigation, **your vendor wrapper implementation is faithful
 | Audio normalization | -25 dBFS | -25 dBFS | OK |
 | Audio encoder dtype | bfloat16 (from config) | bfloat16 (from config) | OK |
 | LM dtype | bfloat16 | bfloat16 | OK |
-| Speech tokens | `<\|object_ref_start\|>`, `<\|box_start\|>`, `<\|object_ref_end\|>` | Same fallback chain | OK |
+| Speech tokens | `<\|object_ref_start\|>`, `<\|box_start\|>`, `<\|object_ref_end\|>` | Same mapping behavior | OK |
 | Compress ratio | 3200 (from config) | 3200 (from config) | OK |
 | Streaming segments | 60s default | 60s default | OK |
 | vLLM version | v0.14.1 | v0.14.1 | OK |
@@ -100,6 +100,7 @@ If the quality issue is "not even as high as Whisper V3" for **general, short-fo
 
 ```
 --served-model-name vibevoice
+--host 127.0.0.1
 --trust-remote-code
 --dtype bfloat16
 --max-num-seqs 64
@@ -109,7 +110,6 @@ If the quality issue is "not even as high as Whisper V3" for **general, short-fo
 --enable-chunked-prefill
 --chat-template-content-format openai
 --tensor-parallel-size 1
---allowed-local-media-path /tmp
 --port 8000
 ```
 
